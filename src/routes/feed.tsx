@@ -21,6 +21,13 @@ import remarkGfm from "remark-gfm";
 import { VideoEmbed } from "@/components/VideoEmbed";
 import { toast } from "sonner";
 import { RoleBadge } from "@/components/RoleBadge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { SiteShell } from "@/components/site/SiteShell";
 import { createClient } from "@/lib/supabase/client";
 import { calculateReadTime } from "@/utils/readTime";
@@ -615,23 +622,30 @@ export default function Feed() {
               )}
 
               <div className="neu-border flex flex-col gap-3 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
-                <select
+                <Select
                   value={selectedClubId}
-                  onChange={(event) => setSelectedClubId(event.target.value)}
-                  className="bg-transparent font-mono text-xs outline-none"
-                  aria-label="Choose club for post"
+                  onValueChange={setSelectedClubId}
+                  disabled={userClubs.length === 0}
                 >
-                  {userClubs.length === 0 && <option value="">No clubs joined</option>}
-                  {userClubs.map((userClub) => {
-                    const club = Array.isArray(userClub.clubs) ? userClub.clubs[0] : userClub.clubs;
-
-                    return club ? (
-                      <option key={club.id} value={club.id}>
-                        Posting to · {club.name}
-                      </option>
-                    ) : null;
-                  })}
-                </select>
+                  <SelectTrigger
+                    className="w-full border-none bg-transparent font-mono text-xs shadow-none sm:w-auto"
+                    aria-label="Choose club for post"
+                  >
+                    <SelectValue placeholder="No clubs joined" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userClubs.map((userClub) => {
+                      const club = Array.isArray(userClub.clubs)
+                        ? userClub.clubs[0]
+                        : userClub.clubs;
+                      return club ? (
+                        <SelectItem key={club.id} value={club.id}>
+                          Posting to · {club.name}
+                        </SelectItem>
+                      ) : null;
+                    })}
+                  </SelectContent>
+                </Select>
 
                 <div className="flex items-center gap-2">
                   <button
