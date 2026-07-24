@@ -41,6 +41,7 @@ import { OptimizedImage } from "@/components/media/OptimizedImage";
 import { parseCoordinates } from "@/lib/eventUtils";
 import { EventFeedbackForm } from "@/components/EventFeedbackForm";
 import { EventMap } from "@/components/EventMap";
+import { PredictiveTurnout } from "@/components/events/PredictiveTurnout";
 import {
   Accordion,
   AccordionContent,
@@ -206,7 +207,7 @@ export default function EventDetailsPage() {
         .from("events")
         .select(
           `
-          id, title, description, category_id, event_date, start_date, end_date, location, banner_url, created_by, max_attendees, faqs,
+          id, title, description, category_id, event_date, start_date, end_date, location, latitude, longitude, banner_url, created_by, max_attendees, faqs,
           clubs (name, slug),
           event_rsvps (id, user_id, checked_in),
           event_waitlist (id, user_id, created_at),
@@ -248,6 +249,8 @@ export default function EventDetailsPage() {
                   : "Student Activity Centre, IIT Bombay, Powai, Mumbai",
             banner_url: null as string | null,
             max_attendees: eventId === "mock-1" ? 1 : null,
+            latitude: eventId === "mock-1" ? 30.3564 : eventId === "mock-2" ? 28.5355 : 19.076,
+            longitude: eventId === "mock-1" ? 76.3647 : eventId === "mock-2" ? 77.209 : 72.8777,
             clubs: [
               {
                 name:
@@ -420,7 +423,7 @@ export default function EventDetailsPage() {
   }
 
   const rsvps = Array.isArray(event.event_rsvps) ? event.event_rsvps : [];
-  const hasRsvpd = user ? rsvps.some((r) => r.user_id === user.id) : false;
+  const hasRsvpd = user ? rsvps.some((r: { user_id: string }) => r.user_id === user.id) : false;
   const isCheckedIn = user
     ? rsvps.some(
         (r: { user_id: string; checked_in?: boolean }) => r.user_id === user.id && r.checked_in,
@@ -429,7 +432,9 @@ export default function EventDetailsPage() {
   const hasEnded = event.end_date ? new Date() > new Date(event.end_date) : false;
   const rawFeedbacks = (event as Record<string, unknown>).event_feedbacks;
   const hasSubmittedFeedback =
-    user && Array.isArray(rawFeedbacks) ? rawFeedbacks.some((f) => f.user_id === user.id) : false;
+    user && Array.isArray(rawFeedbacks)
+      ? (rawFeedbacks as { user_id: string }[]).some((f) => f.user_id === user.id)
+      : false;
 
   const rawWaitlist = (event as Record<string, unknown>).event_waitlist;
   const waitlist = Array.isArray(rawWaitlist)
@@ -824,6 +829,19 @@ export default function EventDetailsPage() {
               </Dialog>
             )}
           </div>
+
+          {/* Predictive Turnout (Visible to Organizer / Admins) */}
+          {isOrganizer && (
+            <div className="mt-8">
+              <PredictiveTurnout
+                rsvpCount={attendeeCount}
+                latitude={(event as Record<string, unknown>).latitude as number | null}
+                longitude={(event as Record<string, unknown>).longitude as number | null}
+                location={event.location || ""}
+                clubName={club?.name || ""}
+              />
+            </div>
+          )}
 
           {/* Description */}
           <div className="mt-8">
