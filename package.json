@@ -24,9 +24,11 @@
     "github:update-labels": "npx tsx scripts/update-labels.ts",
     "github:create-new-issues": "npx tsx scripts/create-new-issues.ts",
     "github:create-frontend-issues": "npx tsx scripts/create-frontend-issues.ts",
-    "github:create-backend-issues": "npx tsx scripts/create-backend-issues.ts"
+    "github:create-backend-issues": "npx tsx scripts/create-backend-issues.ts",
+    "github:audit-labels": "npx tsx scripts/audit-labels.ts"
   },
   "dependencies": {
+    "workbox-cacheable-response": "^7.3.0",
     "@hookform/resolvers": "^5.2.2",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/core": "^2.10.0",
@@ -94,8 +96,7 @@
     "react-easy-crop": "^6.2.2",
     "react-helmet-async": "^2.0.5",
     "react-hook-form": "^7.71.2",
-    "react-intersection-observer": "^10.1.0",
-    "react-leaflet": "^5.0.0",
+    "react-joyride": "^3.2.0",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.6.5",
     "react-router-dom": "^7.18.1",
@@ -124,6 +125,7 @@
     ]
   },
   "devDependencies": {
+    "vite-plugin-pwa": "^1.0.0",
     "@commitlint/cli": "^19.5.0",
     "@commitlint/config-conventional": "^19.5.0",
     "@eslint/js": "^9.32.0",
