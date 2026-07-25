@@ -1,16 +1,12 @@
 import { formatDate, formatEventDateRange, getCountdown, getGoogleCalendarUrl } from "@/lib/utils";
 import { Link } from "react-router-dom";
-import { useState } from "react";
-import { BookmarkButton } from "@/components/events/BookmarkButton";
-import { Calendar, Check, Share2, Link as LinkIcon } from "lucide-react";
-import { ShareMenu } from "@/components/ui/ShareMenu";
+import { FormEvent, useState } from "react";
+import { Calendar, Check, Share2, X, Link as LinkIcon, Bookmark } from "lucide-react";
 import { toast } from "sonner";
 import { TicketDialog } from "@/components/ui/ticket-modal";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { EventRSVPButton } from "@/components/EventRSVPButton";
-import { ConfirmModal } from "@/components/ui/confirm-modal";
-import { motion } from "framer-motion";
 
 interface Event {
   id: string;
@@ -38,8 +34,6 @@ interface EventCardProps {
 }
 
 // Assumed lead time (in days) used when an event has no `created_at` available
-// (e.g. mock/dev fallback data, or a query that hasn't been updated to select it
-// yet). This keeps the progress bar meaningful instead of just hiding it.
 const ASSUMED_LEAD_TIME_DAYS = 30;
 
 interface EventProgress {
@@ -55,12 +49,12 @@ function getEventProgress(createdAt: string | null | undefined, eventDate: strin
   const now = Date.now();
   const eventTime = new Date(eventDate).getTime();
 
-  if (now > eventTime) {
+  if (now >= eventTime) {
     return { percent: 100, isPast: true, isEstimated: false };
   }
 
-  let isEstimated = false;
   let startTime: number;
+  let isEstimated = false;
 
   if (createdAt) {
     startTime = new Date(createdAt).getTime();
@@ -87,21 +81,20 @@ function EventProgressBar({
   createdAt: string | null | undefined;
   eventDate: string | null;
 }) {
-  // No date at all ("TBA" events) — nothing meaningful to show a timeline for.
   if (!eventDate) return null;
 
   const { percent, isPast, isEstimated } = getEventProgress(createdAt, eventDate);
 
   return (
     <div className="mt-4">
-      <div className="mb-1 flex items-center justify-between font-mono text-[10px] font-bold uppercase text-black">
+      <div className="mb-1 flex items-center justify-between font-mono text-[9px] sm:text-xs font-bold uppercase text-black">
         <span>Time to event</span>
         <span>{isPast ? "Ended" : `${Math.round(percent)}%`}</span>
       </div>
       <div className="h-4 w-full neu-border overflow-hidden bg-white p-0.5">
         {isPast ? (
           <div className="flex h-full w-full items-center justify-center bg-gray-200">
-            <span className="font-mono text-[9px] font-bold uppercase text-gray-500">
+            <span className="font-mono text-[8px] sm:text-[9px] font-bold uppercase text-gray-500">
               Event has passed
             </span>
           </div>
@@ -113,12 +106,40 @@ function EventProgressBar({
         )}
       </div>
       {isEstimated && !isPast && (
-        <p className="mt-1 font-mono text-[9px] text-gray-500">
+        <p className="mt-1 font-mono text-[8px] sm:text-[9px] text-gray-500">
           Estimated — creation date unavailable
         </p>
       )}
     </div>
   );
+}
+
+/**
+ * Helper to auto-detect and linkify http/https URLs within a text string.
+ */
+function renderLocationWithLinks(locationText: string | null) {
+  if (!locationText) return "TBA";
+
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts = locationText.split(urlRegex);
+
+  return parts.map((part, i) => {
+    if (part.match(urlRegex)) {
+      return (
+        <a
+          key={i}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline hover:text-blue-700 transition-colors break-all"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
 }
 
 export function EventCard({
@@ -146,7 +167,6 @@ export function EventCard({
   });
   const countdown = event.event_date ? getCountdown(event.event_date) : "TBA";
 
-  const [copied, setCopied] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
@@ -160,24 +180,23 @@ export function EventCard({
     }
   };
 
-  const handleShare = async () => {
-    const shareUrl = `${window.location.origin}${window.location.pathname}#event-${event.id}`;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopied(true);
-      toast.success("Link copied!");
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      toast.error("Failed to copy link.");
-    }
-  };
+  const shareUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${window.location.pathname}#event-${event.id}`
+      : "";
 
-  const handleRsvpToggleClick = (eventId: string, currentHasRsvpd: boolean) => {
-    if (currentHasRsvpd) {
-      setConfirmOpen(true);
-    } else {
-      onRsvpToggle(eventId, false);
+  const handleRsvpClick = () => {
+    if (!user) {
+      toast.error("Please log in to RSVP");
+      return;
     }
+
+    if (hasRsvpd) {
+      setConfirmOpen(true);
+      return;
+    }
+
+    onRsvpToggle(event.id, false);
   };
 
   const savedEventsList = Array.isArray(event.saved_events) ? event.saved_events : [];
@@ -221,23 +240,28 @@ export function EventCard({
         </div>
 
         <div className="flex gap-2 relative z-10">
-          <BookmarkButton
-            isSaved={isSaved}
-            isPending={isBookmarkPending}
-            onClick={handleBookmarkClick}
-          />
           <button
             type="button"
-            onClick={handleShare}
-            aria-label="Copy event link"
-            className="neu-border neu-press grid h-8 w-8 shrink-0 place-items-center bg-white text-black"
+            onClick={handleBookmarkClick}
+            disabled={isBookmarkPending}
+            className="neu-border neu-press grid h-8 w-8 shrink-0 place-items-center bg-white text-black transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label={isSaved ? "Unsave event" : "Save event"}
           >
-            {copied ? (
-              <Check aria-hidden="true" size={14} strokeWidth={3} />
-            ) : (
-              <Share2 aria-hidden="true" size={14} strokeWidth={3} />
-            )}
+            <Bookmark className="h-4 w-4" fill={isSaved ? "black" : "none"} />
           </button>
+          <ShareMenu
+            url={shareUrl}
+            title={event.title}
+            text={`Check out this event: ${event.title}`}
+          >
+            <button
+              type="button"
+              aria-label="Share event link"
+              className="neu-border neu-press grid h-8 w-8 shrink-0 place-items-center bg-white text-black"
+            >
+              <Share2 aria-hidden="true" size={14} strokeWidth={3} />
+            </button>
+          </ShareMenu>
         </div>
       </div>
 
@@ -250,25 +274,22 @@ export function EventCard({
       <p className="mt-1 font-mono text-sm font-bold text-blue-900">{club?.name}</p>
 
       {event.description ? (
-        <div className="mt-4">
-          <motion.div
-            initial={false}
-            animate={{ height: "auto" }}
-            transition={{ duration: 0.3, ease: "easeInOut" }}
-            className="overflow-hidden"
-          >
-            <p className="text-sm leading-6 text-gray-800 inline">{displayedDescription}</p>
+        <div
+          className={`mt-4 overflow-hidden transition-all duration-300 ease-in-out ${
+            isDescriptionExpanded ? "max-h-250" : "max-h-40"
+          }`}
+        >
+          <p className="text-sm leading-6 text-gray-800 inline">{displayedDescription}</p>
 
-            {shouldTruncate && (
-              <button
-                type="button"
-                onClick={() => setIsDescriptionExpanded((prev) => !prev)}
-                className="ml-1 inline font-semibold text-violet-700 hover:text-violet-900 transition-colors"
-              >
-                {isDescriptionExpanded ? "Read less" : "Read more"}
-              </button>
-            )}
-          </motion.div>
+          {shouldTruncate && (
+            <button
+              type="button"
+              onClick={() => setIsDescriptionExpanded((prev) => !prev)}
+              className="ml-1 inline font-semibold text-violet-700 hover:text-violet-900 transition-colors"
+            >
+              {isDescriptionExpanded ? "Read less" : "Read more"}
+            </button>
+          )}
         </div>
       ) : null}
 
@@ -281,7 +302,7 @@ export function EventCard({
         </div>
         <div>
           <dt className="font-mono text-xs font-bold uppercase text-black">Venue</dt>
-          <dd className="mt-1 text-sm text-red-900">{event.location || "TBA"}</dd>
+          <dd className="mt-1 text-sm text-red-900">{renderLocationWithLinks(event.location)}</dd>
         </div>
         <div>
           <dt className="font-mono text-xs font-bold uppercase text-black">Attendees</dt>
@@ -295,7 +316,7 @@ export function EventCard({
           user={user}
           hasRsvpd={hasRsvpd}
           isPending={isRsvpPending}
-          onToggle={handleRsvpToggleClick}
+          onToggle={onRsvpToggle}
         />
 
         <TooltipProvider>
@@ -338,27 +359,13 @@ export function EventCard({
           </Button>
         )}
       </div>
-
       <div className="mt-4">
         <ShareMenu
-          url={typeof window !== "undefined" ? window.location.href : ""}
+          url={shareUrl}
           title={event.title}
           text={`Check out this event: ${event.title}`}
         />
       </div>
-
-      <ConfirmModal
-        open={confirmOpen}
-        onCancel={() => setConfirmOpen(false)}
-        title="Cancel your RSVP?"
-        description="Are you sure you want to remove your RSVP for this event?"
-        confirmText="Yes, cancel RSVP"
-        onConfirm={() => {
-          onRsvpToggle(event.id, true);
-          setConfirmOpen(false);
-        }}
-      />
-
       <TicketDialog
         open={ticketOpen}
         onOpenChange={setTicketOpen}

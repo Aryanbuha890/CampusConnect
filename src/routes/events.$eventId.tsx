@@ -41,6 +41,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { OptimizedImage } from "@/components/media/OptimizedImage";
 import { parseCoordinates } from "@/lib/eventUtils";
 import { EventFeedbackForm } from "@/components/EventFeedbackForm";
+import { EventPhotoGallery } from "@/components/EventPhotoGallery";
 import { EventMap } from "@/components/EventMap";
 import { PredictiveTurnout } from "@/components/events/PredictiveTurnout";
 import {
@@ -142,11 +143,8 @@ function SimilarEvents({
             </h3>
             {evt.event_date && (
               <p className="font-mono text-xs text-black/60 mt-1">
-
                 📅 {formatStandardDate(evt.event_date)}
-
                 📅 {new Date(evt.event_date).toLocaleDateString()}
-
               </p>
             )}
           </Link>
@@ -214,6 +212,7 @@ export default function EventDetailsPage() {
           `
           id, title, description, category_id, event_date, start_date, end_date, location, latitude, longitude, banner_url, created_by, max_attendees, faqs,
           clubs (name, slug),
+          profiles (full_name, email),
           event_rsvps (id, user_id, checked_in),
           event_waitlist (id, user_id, created_at),
           event_feedbacks (id, user_id)
@@ -278,6 +277,7 @@ export default function EventDetailsPage() {
             event_feedbacks: [] as { id: string; user_id: string }[],
             faqs: [] as { question: string; answer: string }[],
             attendee_count: eventId === "mock-1" ? 1 : 0,
+            profiles: { full_name: "Mock Organizer", email: "mock@example.com" },
           };
         }
         throw error;
@@ -338,8 +338,18 @@ export default function EventDetailsPage() {
     onSuccess: () => {
       refetch();
     },
-    onError: (error: Error) => {
-      toast.error(error.message || "Failed to update RSVP. Please try again.");
+    onError: (error: (Error & { details?: string; context?: string }) | unknown) => {
+      const err = error as Record<string, unknown>;
+      if (
+        (typeof err?.message === "string" && err.message.includes("Rate limit")) ||
+        (typeof err?.details === "string" && err.details.includes("Rate limit")) ||
+        (typeof err?.context === "string" && err.context.includes("Rate limit")) ||
+        (typeof error === "string" && error.includes("Rate limit"))
+      ) {
+        toast.error("Please wait a minute before toggling RSVP again.");
+      } else {
+        toast.error((err?.message as string) || "Failed to update RSVP. Please try again.");
+      }
     },
   });
 
@@ -625,6 +635,27 @@ export default function EventDetailsPage() {
                 {club.name}
               </Link>
             </p>
+          )}
+
+          {!club && event.profiles && (
+            <div
+              className={`mt-4 font-mono text-base font-bold ${event.banner_url ? "text-white/90" : "text-black/80"} flex items-center gap-4`}
+            >
+              <span>Organized by: {(event.profiles as { full_name: string }).full_name}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  import("@/lib/vcardUtils").then(({ downloadVCard }) => {
+                    downloadVCard(event.profiles as { full_name: string; email: string });
+                  });
+                }}
+                className="neu-border h-8 bg-white/20 hover:bg-white/40 text-xs px-3"
+              >
+                <Download className="mr-2 h-3 w-3" />
+                Download Contact (vCard)
+              </Button>
+            </div>
           )}
 
           <div
@@ -961,7 +992,7 @@ export default function EventDetailsPage() {
             </div>
           )}
 
-          {/* Event Feedback Form (Only if ended and user RSVP'd) */}
+          {/* Event Feedback (Only if ended and user RSVP'd) */}
           {user &&
             hasRsvpd &&
             event.end_date &&
@@ -970,6 +1001,13 @@ export default function EventDetailsPage() {
                 <EventFeedbackForm eventId={event.id} user={user} />
               </div>
             )}
+
+          {/* Attendee Photo Gallery (Only for past events) */}
+          {event.end_date && new Date(event.end_date).getTime() < Date.now() && (
+            <div className="mt-10 pt-10 border-t-2 border-black border-dashed">
+              <EventPhotoGallery eventId={event.id} user={user} />
+            </div>
+          )}
 
           {/* Similar Events Recommendation Block */}
           <SimilarEvents
