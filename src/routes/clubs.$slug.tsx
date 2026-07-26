@@ -6,7 +6,7 @@ import { SiteShell } from "@/components/site/SiteShell";
 import { useQuery, useMutation } from "@/hooks/useReactQueryReplacement";
 import { createClient } from "@/lib/supabase/client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { User } from "@supabase/supabase-js";
+import type { User } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { parse } from "@/lib/markdown";
@@ -15,7 +15,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ArrowLeft, Github, Loader2, CheckCircle, Flag } from "lucide-react";
 import { ReportDialog } from "@/components/ReportDialog";
 import { EmptyState } from "@/components/EmptyState";
-import { VideoPlayer } from "@/components/VideoPlayer";import {
+import { VideoPlayer } from "@/components/VideoPlayer";
+import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbLink,
@@ -214,7 +215,7 @@ export default function ClubProfile() {
   );
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
+    supabase.auth.getUser().then(({ data }) => setUser(data?.user ?? null));
   }, [supabase]);
 
   const {
@@ -438,12 +439,10 @@ export default function ClubProfile() {
                 <h3 className="font-display text-xl font-bold text-indigo-900 uppercase tracking-tight">
                   Featured Club Promo
                 </h3>
-<div className="neu-border bg-black aspect-video mt-4 overflow-hidden">
-                  <VideoPlayer
-                    src={club.promo_video_url}
-                    title="Club Promo"
-                  />
-                </div>              </div>
+                <div className="neu-border bg-black aspect-video mt-4 overflow-hidden">
+                  <VideoPlayer src={club.promo_video_url} title="Club Promo" />
+                </div>{" "}
+              </div>
             )}
 
             {/* Members section below the description */}
@@ -471,12 +470,7 @@ export default function ClubProfile() {
                     />
                   </div>
                   {filteredMembers.length === 0 ? (
-                    <EmptyState
-                      size="sm"
-                      bordered={false}
-                      illustration="no-results"
-                      title="No members match your search."
-                    />
+                    <EmptyState illustration="no-results" title="No members match your search." />
                   ) : (
                     <>
                       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -606,7 +600,7 @@ export default function ClubProfile() {
                         Cancel
                       </AlertDialogCancel>
                       <AlertDialogAction
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                           e.preventDefault();
                           joinMutation.mutate();
                         }}
@@ -657,7 +651,6 @@ export default function ClubProfile() {
               </h2>
               {events.length === 0 ? (
                 <EmptyState
-                  bordered={false}
                   illustration="no-events"
                   title="No upcoming events."
                   description="Check back soon — this club hasn't scheduled anything yet."

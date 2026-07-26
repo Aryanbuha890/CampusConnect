@@ -33,24 +33,13 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 
-import { FlyerUploader } from "@/components/FlyerUploader";
-import type { ParsedFlyer } from "@/lib/parser";
-
-import { TagMultiSelect } from "@/components/ui/TagMultiSelect";
-
-const STEPS = [
-  { label: "Details" },
-  { label: "Logistics" },
-  { label: "Media & Ticketing" },
-] as const;
-
-type Step = 0 | 1 | 2;
-const STEP_FIELDS: Record<Step, (keyof EventFormValues)[]> = {
-  0: ["title", "description", "tags"],
-  1: ["startDate", "endDate", "location"],
-  2: ["banner", "capacity", "faqs"],
-};
+// Define an extended interface locally to handle the extra location field safely
+interface LocalEventFormValues extends EventFormValues {
+  location?: string;
+  requiresApproval?: boolean;
+}
 
 const defaultValues: EventFormValues = {
   title: "",
@@ -58,10 +47,7 @@ const defaultValues: EventFormValues = {
   location: "",
   startDate: "",
   endDate: "",
-  banner: "",
-  capacity: "",
-  faqs: [],
-  tags: [],
+  requiresApproval: false,
 };
 
 const DRAFT_KEY = "event_draft";
@@ -148,10 +134,8 @@ export function CreateEventDialog({
         // read event_date (e.g. EventCard, event ordering) keep working.
         event_date: startDateIso,
         created_by: user.id,
-        banner: values.banner?.trim() || null,
-        capacity: values.capacity || null,
-        faqs: values.faqs && values.faqs.length > 0 ? values.faqs : [],
-        tags: values.tags && values.tags.length > 0 ? values.tags : [],
+        club_id: myClub.id,
+        requires_approval: values.requiresApproval || false,
       });
 
       if (error) {
@@ -374,6 +358,30 @@ export function CreateEventDialog({
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="isPrivate"
+                  render={({ field }) => (
+                    <FormItem className="neu-border flex items-center justify-between bg-white p-3 shadow-none">
+                      <div className="space-y-0.5">
+                        <FormLabel className="cursor-pointer font-mono text-xs font-bold uppercase text-black">
+                          Private Event (Members Only)
+                        </FormLabel>
+                        <p className="text-[11px] text-black/60">
+                          Restrict visibility to approved members of the hosting club.
+                        </p>
+                      </div>
+                      <FormControl>
+                        <input
+                          type="checkbox"
+                          checked={field.value}
+                          onChange={(e) => field.onChange(e.target.checked)}
+                          className="h-4 w-4 rounded border-2 border-black accent-teal-500 cursor-pointer"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </>
             )}
 
@@ -409,7 +417,8 @@ export function CreateEventDialog({
                       src={`https://maps.google.com/maps?q=${encodeURIComponent(watchedLocation)}&output=embed`}
                       title="Location preview"
                     />
-                    
+
+                    <a
                       href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(watchedLocation)}`}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -517,16 +526,22 @@ export function CreateEventDialog({
                   name="banner"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Banner Image URL</FormLabel>
+                      <FormLabel>Banner Image</FormLabel>
+                      <ImageCropUpload
+                        aspect={16 / 9}
+                        bucket="event-banners"
+                        value={field.value || undefined}
+                        onUploaded={(url) => field.onChange(url, { shouldValidate: true })}
+                        hint="JPEG, PNG or WEBP · Max 5 MB · 16:9 crop"
+                      />
+                      <p className="mt-1 text-xs text-black/50">Or paste a URL directly:</p>
                       <FormControl>
                         <Input
                           placeholder="https://example.com/banner.png"
                           {...field}
+                          value={field.value ?? ""}
                         />
                       </FormControl>
-                      <p className="mt-1 text-xs text-black/50">
-                        Paste a link to a banner image (optional)
-                      </p>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -539,12 +554,7 @@ export function CreateEventDialog({
                     <FormItem>
                       <FormLabel>Ticket Capacity</FormLabel>
                       <FormControl>
-                        <Input
-                          type="number"
-                          min={1}
-                          placeholder="e.g. 100"
-                          {...field}
-                        />
+                        <Input type="number" min={1} placeholder="e.g. 100" {...field} />
                       </FormControl>
                       <p className="mt-1 text-xs text-black/50">
                         Max number of attendees (optional, leave blank for unlimited)
@@ -616,29 +626,30 @@ export function CreateEventDialog({
               </div>
             )}
 
-            <DialogFooter className="flex gap-2 pt-2">
-              {step > 0 && (
-                <Button type="button" variant="outline" onClick={handleBack} className="flex-1">
-                  Back
-                </Button>
+            <FormField
+              control={form.control}
+              name="requiresApproval"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border-2 border-black bg-white p-4 shadow-sm">
+                  <FormControl>
+                    <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
+                  <div className="space-y-1 leading-none">
+                    <FormLabel className="font-bold cursor-pointer">
+                      Requires Manual Approval
+                    </FormLabel>
+                    <p className="text-xs text-black/50">
+                      Organizers must manually approve attendee RSVPs.
+                    </p>
+                  </div>
+                </FormItem>
               )}
-              {step < 2 ? (
-                <Button
-                  type="button"
-                  onClick={handleNext}
-                  className="flex-1 bg-black text-cream hover:bg-black/80"
-                >
-                  Next →
-                </Button>
-              ) : (
-                <Button
-                  type="submit"
-                  disabled={createEvent.isPending}
-                  className="flex-1 bg-black text-cream hover:bg-black/80"
-                >
-                  {createEvent.isPending ? "Creating..." : "Create event"}
-                </Button>
-              )}
+            />
+
+            <DialogFooter className="pt-2">
+              <Button type="submit" disabled={createEvent.isPending} className="w-full sm:w-auto">
+                {createEvent.isPending ? "Creating..." : "Create event"}
+              </Button>
             </DialogFooter>
           </form>
         </Form>
