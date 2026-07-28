@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { useQuery, useMutation } from "@/hooks/useReactQueryReplacement";
+import { useQuery, useMutation, setQueryData } from "@/hooks/useReactQueryReplacement";
 import { createClient } from "@/lib/supabase/client";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { User } from "@supabase/supabase-js";
@@ -11,6 +11,7 @@ import { MapSkeleton } from "@/components/ui/MapSkeleton";
 const EventMap = lazy(() => import("@/components/EventMap").then((m) => ({ default: m.EventMap })));
 import { formatEventDateRange } from "@/lib/utils";
 import { downloadIcs, getGoogleCalendarUrl } from "@/lib/calendarUtils";
+import { EventCapacityGauge } from "@/components/events/EventCapacityGauge";
 import { formatStandardDate } from "@/utils/dateUtils";
 import { toast } from "sonner";
 import { ShareMenu } from "@/components/ui/ShareMenu";
@@ -352,17 +353,19 @@ export default function EventDetailsPage() {
   } = useQuery({
     queryKey: ["event", eventId],
     queryFn: async () => {
+      // Try to lookup by short_id first, then fall back to UUID for backwards compatibility
       const { data, error } = await supabase
         .from("events")
         .select(
           `
+          id, title, description, event_date, start_date, end_date, location, banner_url, created_by, short_id,
           id, title, description, event_date, start_date, end_date, location, banner_url, created_by, max_attendees, requires_approval,
           clubs (name, slug),
           event_rsvps (id, user_id, status, checked_in, rsvp_at, profiles (first_name, last_name, avatar_url)),
           event_waitlist (id, user_id, created_at, profiles (first_name, last_name, avatar_url))
         `,
         )
-        .eq("id", eventId)
+        .or(`short_id.eq.${eventId},id.eq.${eventId}`)
         .single();
 
       if (error) {
@@ -515,9 +518,37 @@ export default function EventDetailsPage() {
 
       if (error) throw error;
     },
-    onSuccess: () => {
-      refetch();
+    onMutate: async ({ hasRsvpd }) => {
+      // Snapshot the previous value
+      const previousEvent = event;
+
+      // Optimistically update the cache
+      if (event) {
+        const eventRsvps = Array.isArray(event.event_rsvps) ? event.event_rsvps : [];
+        const updatedRsvps = hasRsvpd
+          ? eventRsvps.filter((r) => r.user_id !== user?.id)
+          : [...eventRsvps, { id: `temp-${Date.now()}`, user_id: user?.id || "" }];
+
+        const updatedEvent = {
+          ...event,
+          event_rsvps: updatedRsvps,
+          attendee_count: hasRsvpd
+            ? (event.attendee_count || 0) - 1
+            : (event.attendee_count || 0) + 1,
+        };
+
+        setQueryData(["event", eventId], updatedEvent);
+      }
+
+      // Return context with previous data for rollback
+      return { previousEvent };
     },
+    onError: (error, variables, context) => {
+      // Rollback to previous value on error
+      if (context?.previousEvent) {
+        setQueryData(["event", eventId], context.previousEvent);
+      }
+      toast.error(error.message || "Failed to update RSVP. Please try again.");
     onError: (error: (Error & { details?: string; context?: string }) | unknown) => {
       const err = error as Record<string, unknown>;
       if (
@@ -530,6 +561,10 @@ export default function EventDetailsPage() {
       } else {
         toast.error((err?.message as string) || "Failed to update RSVP. Please try again.");
       }
+    },
+    onSuccess: () => {
+      // Refetch to ensure server state matches
+      refetch();
     },
   });
 
@@ -1121,6 +1156,15 @@ export default function EventDetailsPage() {
             </div>
           </div>
 
+          <div className="mt-6 max-w-md">
+            <EventCapacityGauge
+              eventId={event.id}
+              initialCapacity={attendeeCount}
+              maxAttendees={maxAttendees || null}
+              showDetails={true}
+            />
+          </div>
+
           <div className="mt-8 hidden items-center gap-4 md:flex">
             {hasRsvpd ? (
               <Button
@@ -1357,6 +1401,10 @@ export default function EventDetailsPage() {
             <ActivePoll eventId={eventId} userId={user?.id} />
           </div>
 
+          {/* Live Q&A */}
+          <div className="mt-8">
+            <LiveQA eventId={eventId} userId={user?.id} isOrganizer={isOrganizer} />
+          </div>
           {/* Description */}
           <div className="mt-8">
             <h2 className="font-display text-xl font-bold uppercase tracking-tight text-blue-900">
