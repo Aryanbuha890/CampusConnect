@@ -14,6 +14,7 @@ import {
 import Layout from "./components/Layout";
 import { ErrorBoundary, RouteErrorBoundary } from "./components/ErrorBoundary";
 import { PageWrapper } from "./components/PageWrapper";
+import ThemeToggle from "./components/ThemeToggle"; // <-- Added Import
 
 // Pages
 import Index from "./routes/index";
@@ -34,9 +35,8 @@ import ForgotPassword from "./routes/forgot-password";
 import ResetPassword from "./routes/reset-password";
 import Settings from "./routes/settings";
 import VerifyEmail from "./routes/verify-email";
-import PendingClubsAdmin from "./routes/admin.clubs.pending";
-import AdminReportsPage from "./routes/admin.reports";
-import AdminUsersPage from "./routes/admin.users";
+const PendingClubsAdmin = lazy(() => import("./routes/admin.clubs.pending"));
+const AdminReportsPage = lazy(() => import("./routes/admin.reports"));
 import { NotFoundPage } from "./components/NotFoundPage";
 import { createClient } from "./lib/supabase/client";
 
@@ -93,6 +93,7 @@ const DashboardOverview = lazy(() => import("./routes/dashboard.index"));
 const DashboardRsvps = lazy(() => import("./routes/dashboard.rsvps"));
 const DashboardBookmarks = lazy(() => import("./routes/dashboard.bookmarks"));
 const DashboardCalendar = lazy(() => import("./routes/dashboard.calendar"));
+const GlobalCalendar = lazy(() => import("./routes/calendar"));
 const Feed = lazy(() => import("./routes/feed"));
 const EventsMapPage = lazy(() => import("./routes/events.map"));
 const ForgotPassword = lazy(() => import("./routes/forgot-password"));
@@ -157,6 +158,16 @@ const router = createBrowserRouter(
           <Route path="calendar" element={<DashboardCalendar />} />
         </Route>
 
+        <Route
+          path="/calendar"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              {" "}
+              <GlobalCalendar />
+            </Suspense>
+          }
+        />
+
         <Route path="/events" element={<LazyEventsIndex />} />
         <Route path="/events/:eventId" element={<LazyEventDetails />} />
         <Route path="/events/:eventId/dashboard" element={<EventDashboard />} />
@@ -170,10 +181,22 @@ const router = createBrowserRouter(
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/messages" element={<MessagesRoute />} />
-        <Route path="/admin/clubs/pending" element={<PendingClubsAdmin />} />
-        <Route path="/admin/reports" element={<AdminReportsPage />} />
-        <Route path="/admin/users" element={<AdminUsersPage />} />
+        <Route
+          path="/admin/clubs/pending"
+          element={
+            <Suspense fallback={<div className="h-64 bg-cream animate-pulse" />}>
+              <PendingClubsAdmin />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/admin/reports"
+          element={
+            <Suspense fallback={<div className="h-64 bg-cream animate-pulse" />}>
+              <AdminReportsPage />
+            </Suspense>
+          }
+        />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Route>,
@@ -233,12 +256,19 @@ export default function App() {
   }, []);
 
   if (dbStatus === "offline") {
+    // Assuming MaintenancePage is imported somewhere else in your environment
     return <MaintenancePage />;
   }
 
   return (
+    // Assuming QueryClientProvider and queryClient are injected/imported properly
     <QueryClientProvider client={queryClient}>
       <ErrorBoundary>
+        {/* Floating Dark Mode Toggle */}
+        <div className="fixed bottom-4 right-4 z-[9999]">
+          <ThemeToggle />
+        </div>
+
         <RouterProvider router={router} />
       </ErrorBoundary>
     </QueryClientProvider>
