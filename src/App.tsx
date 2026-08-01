@@ -22,6 +22,7 @@ import { CommandPalette } from "./components/ui/command-palette";
 import MaintenancePage from "./components/MaintenancePage";
 import { NotFoundPage } from "./components/NotFoundPage";
 import { createClient } from "./lib/supabase/client";
+import { BreadcrumbProvider } from "@/components/BreadcrumbsContext";
 
 function RemoteLoadingScreen() {
   return (
@@ -286,7 +287,9 @@ export default function App() {
                 <ThemeToggle />
               </div>
 
-              <RouterProvider router={router} />
+              <BreadcrumbProvider>
+                <RouterProvider router={router} />
+              </BreadcrumbProvider>
             </LazyMotion>
           </ErrorBoundary>
         </QueryClientProvider>
