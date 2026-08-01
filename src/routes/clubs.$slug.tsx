@@ -537,6 +537,12 @@ export default function ClubProfile() {
                   Meeting Notes
                 </Link>
               )}
+              <Link
+                to={`/clubs/${club.slug}/articles`}
+                className="neu-border neu-press bg-peach px-5 py-3 font-mono text-sm font-bold uppercase transition-transform hover:-translate-y-1 inline-block shrink-0 text-center"
+              >
+                Club News
+              </Link>
               {membership?.role === "admin" && (
                 <Link
                   to={`/clubs/${club.slug}/manage`}
