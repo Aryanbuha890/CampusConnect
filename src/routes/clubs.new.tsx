@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
+import { triggerConfetti } from "@/utils/confetti";
 import {
   clubFormSchema,
   type ClubFormValues,
@@ -117,6 +118,7 @@ export default function CreateClubWizard() {
 
       sessionStorage.removeItem(STORAGE_KEY);
       toast.success("Club submitted for administrator review.");
+      triggerConfetti();
       window.dispatchEvent(new Event("refetchClubs"));
       navigate("/clubs");
     } catch (err: unknown) {
