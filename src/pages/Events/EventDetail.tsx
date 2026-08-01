@@ -2,7 +2,7 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, setQueryData } from "@/hooks/useReactQueryReplacement";
 import { createClient } from "@/lib/supabase/client";
 import { useState, useEffect, lazy, Suspense, useMemo } from "react";
-import { motion } from "framer-motion";
+import { LazyMotion, m } from "framer-motion";
 import { Helmet } from "react-helmet-async";
 import { uploadFileWithProgress } from "@/lib/supabase/uploadFileWithProgress";
 import { TableOfContents } from "@/components/events/TableOfContents";
@@ -38,6 +38,7 @@ import {
 
 const EventMap = lazy(() => import("@/components/EventMap").then((m) => ({ default: m.EventMap })));
 import { formatEventDateRange } from "@/lib/utils";
+import { loadDomMax } from "@/lib/motionFeatures";
 import { downloadIcs, getGoogleCalendarUrl } from "@/lib/calendarUtils";
 import { EventCapacityGauge } from "@/components/events/EventCapacityGauge";
 import { formatStandardDate } from "@/utils/dateUtils";
@@ -94,6 +95,7 @@ import { SteganographicQRScanner } from "@/components/SteganographicQRScanner";
 import { CaptchaWidget } from "@/components/CaptchaWidget";
 import { SeatingChart } from "@/components/events/SeatingChart";
 import { useEventSeats } from "@/hooks/useEventSeats";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
 interface SimilarEventItem {
   id: string;
@@ -233,8 +235,8 @@ export default function EventDetailsPage() {
   const supabase = createClient();
   const [user, setUser] = useState<User | null>(null);
   const emailVerified = useEmailVerification();
-  const [copied, setCopied] = useState(false);
-  const [idCopied, setIdCopied] = useState(false);
+  const { copyToClipboard: copyEventLink, isCopied: isEventLinkCopied } = useCopyToClipboard();
+  const { copyToClipboard: copyEventId, isCopied: isEventIdCopied } = useCopyToClipboard();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | undefined>(undefined);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -1136,23 +1138,17 @@ export default function EventDetailsPage() {
   };
 
   const handleCopyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(shareUrl || window.location.href);
-      setCopied(true);
+    if (await copyEventLink(shareUrl || window.location.href)) {
       toast.success("Event link copied to clipboard!");
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       toast.error("Failed to copy link.");
     }
   };
 
   const handleCopyEventId = async () => {
-    try {
-      await navigator.clipboard.writeText(event.id);
-      setIdCopied(true);
+    if (await copyEventId(event.id)) {
       toast.success("Event ID copied to clipboard!");
-      setTimeout(() => setIdCopied(false), 2000);
-    } catch {
+    } else {
       toast.error("Failed to copy event ID.");
     }
   };
@@ -1192,7 +1188,7 @@ export default function EventDetailsPage() {
   });
 
   return (
-    <>
+    <LazyMotion features={loadDomMax} strict={import.meta.env.DEV}>
       {/* Breadcrumb nav */}
       <nav className="border-b-2 border-black bg-white px-4 py-4 md:px-6" aria-label="Breadcrumb">
         <div className="mx-auto max-w-4xl">
@@ -1292,7 +1288,7 @@ export default function EventDetailsPage() {
         {/* Hero Section */}
         <section className="relative w-full overflow-hidden border-b-2 border-black bg-peach/30">
           {event.banner_url ? (
-            <motion.div layoutId={`event-image-${event.id}`} className="absolute inset-0">
+            <m.div layoutId={`event-image-${event.id}`} className="absolute inset-0">
               <OptimizedImage
                 src={event.banner_url}
                 alt={`${event.title} event banner`}
@@ -1307,9 +1303,9 @@ export default function EventDetailsPage() {
                 }
               />
               <div className="absolute inset-0 bg-black/50" />
-            </motion.div>
+            </m.div>
           ) : (
-            <motion.div
+            <m.div
               layoutId={`event-image-${event.id}`}
               className="absolute inset-0 bg-linear-to-br from-peach via-pink-200 to-lime/40"
             />
@@ -1339,7 +1335,11 @@ export default function EventDetailsPage() {
                       className="neu-border rounded-2xl h-8 w-8 shrink-0 bg-black text-white transition-all duration-300 hover:scale-105 active:scale-95"
                       aria-label="Copy Event ID"
                     >
-                      {idCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      {isEventIdCopied ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -1500,12 +1500,12 @@ export default function EventDetailsPage() {
                       variant="outline"
                       className="neu-border neu-press h-12 bg-white px-5 font-mono text-sm font-bold uppercase tracking-wider transition-all duration-300 hover:scale-105 active:scale-95"
                     >
-                      {copied ? (
+                      {isEventLinkCopied ? (
                         <Check className="mr-2 h-4 w-4" />
                       ) : (
                         <LinkIcon className="mr-2 h-4 w-4" />
                       )}
-                      {copied ? "Copied" : "Copy Link"}
+                      {isEventLinkCopied ? "Copied! ✓" : "Copy Link"}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -2490,6 +2490,6 @@ export default function EventDetailsPage() {
           />
         </div>
       )}
-    </>
+    </LazyMotion>
   );
 }

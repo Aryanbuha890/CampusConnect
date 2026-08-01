@@ -1,5 +1,4 @@
 import { Link, useParams } from "react-router-dom";
-// @ts-expect-error - react-helmet-async types may not be resolved in all editor settings
 import { Helmet } from "react-helmet-async";
 import { RoleBadge } from "@/components/RoleBadge";
 import { SiteShell } from "@/components/site/SiteShell";
@@ -19,7 +18,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { AudioReactiveBackground } from "@/components/media/AudioReactiveBackground";
 import LazyHydrate from "@/components/LazyHydrate";
-import { NotFoundPage as NotFound } from "@/components/NotFoundPage";
+import { NotFound } from "@/components/NotFound";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -181,6 +180,8 @@ export default function ClubProfile() {
   const [isJoinDialogOpen, setIsJoinDialogOpen] = useState(false);
   const [joinSuccess, setJoinSuccess] = useState(false);
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
+  const [isClubBookmarked, setIsClubBookmarked] = useState(false);
+  const [bookmarkPending, setBookmarkPending] = useState(false);
 
   const handleTocClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>, id: string) => {
     e.preventDefault();
@@ -227,10 +228,39 @@ export default function ClubProfile() {
     supabase.auth.getUser().then(({ data }) => setUser(data?.user ?? null));
   }, [supabase]);
 
+  // Check if this club is already bookmarked
+  useEffect(() => {
+    if (!user || !club) return;
+    supabase
+      .from("bookmarks")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("club_id", club.id)
+      .maybeSingle()
+      .then(({ data }) => setIsClubBookmarked(!!data));
+  }, [user, club, supabase]);
+
+  const handleClubBookmark = async () => {
+    if (!user) return void toast.error("Please sign in first");
+    if (!club) return;
+    setBookmarkPending(true);
+    const next = !isClubBookmarked;
+    setIsClubBookmarked(next); // optimistic
+    try {
+      await toggleBookmark(user.id, "club", club.id, !next);
+      toast.success(next ? "Club bookmarked!" : "Bookmark removed.");
+    } catch {
+      setIsClubBookmarked(!next); // revert
+      toast.error("Failed to update bookmark.");
+    } finally {
+      setBookmarkPending(false);
+    }
+  };
+
   const {
     data: club,
     isLoading,
-    isError,
+    error,
     refetch,
   } = useQuery({
     ...createClubProfileQueryOptions(supabase, slug ?? ""),
@@ -294,8 +324,16 @@ export default function ClubProfile() {
       .filter((h) => h.id);
   }, [club?.description]);
 
-  if (isLoading) return <ClubProfileSkeleton />;
-  if (isError || !club) return <NotFound />;
+  if (isLoading) {
+    return (
+      <SiteShell>
+        <div className="flex h-[50vh] w-full items-center justify-center p-8">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        </div>
+      </SiteShell>
+    );
+  }
+  if (error || !club) return <NotFound />;
   if (!club)
     return (
       <SiteShell>
@@ -705,6 +743,14 @@ export default function ClubProfile() {
             <div className="mt-6 flex flex-wrap gap-3">
               {/* Join/Leave lives in the sticky ClubHeader now, so it's
                   always reachable — no need to duplicate it here. */}
+              <button
+                onClick={handleClubBookmark}
+                disabled={bookmarkPending}
+                className="neu-border neu-press inline-flex items-center gap-2 bg-white px-5 py-2 font-mono text-xs font-bold uppercase tracking-wider hover:bg-lime disabled:opacity-50"
+              >
+                <Bookmark className="h-3.5 w-3.5" fill={isClubBookmarked ? "black" : "none"} />
+                {isClubBookmarked ? "Bookmarked" : "Bookmark"}
+              </button>
               <button
                 onClick={() => toast.info("Follow feature coming soon!")}
                 className="neu-border neu-press bg-cream px-5 py-2 font-mono text-xs font-bold uppercase tracking-wider"

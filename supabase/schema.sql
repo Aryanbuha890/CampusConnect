@@ -17,24 +17,45 @@ CREATE TABLE profiles (
   bio TEXT,
   skills TEXT[] DEFAULT '{}'::TEXT[],
   role user_role DEFAULT 'student'::user_role,
-  notification_preferences JSONB NOT NULL DEFAULT '{"rsvps": true, "digest": true, "certs": true}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE profiles
-ADD CONSTRAINT profiles_notification_preferences_valid
-CHECK (
-  jsonb_typeof(notification_preferences) = 'object'
-  AND notification_preferences ? 'rsvps'
-  AND notification_preferences ? 'digest'
-  AND notification_preferences ? 'certs'
-  AND jsonb_typeof(notification_preferences->'rsvps') = 'boolean'
-  AND jsonb_typeof(notification_preferences->'digest') = 'boolean'
-  AND jsonb_typeof(notification_preferences->'certs') = 'boolean'
+CREATE INDEX IF NOT EXISTS idx_profiles_skills ON public.profiles USING gin (skills);
+
+CREATE TABLE user_preferences (
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE PRIMARY KEY,
+  email_alerts BOOLEAN NOT NULL DEFAULT true,
+  push_notifications BOOLEAN NOT NULL DEFAULT true,
+  digest BOOLEAN NOT NULL DEFAULT true,
+  dark_mode_default BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_profiles_skills ON public.profiles USING gin (skills);
+ALTER TABLE public.user_preferences ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their own preferences." ON public.user_preferences;
+CREATE POLICY "Users can view their own preferences." ON public.user_preferences
+  FOR SELECT TO authenticated
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert their own preferences." ON public.user_preferences;
+CREATE POLICY "Users can insert their own preferences." ON public.user_preferences
+  FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update their own preferences." ON public.user_preferences;
+CREATE POLICY "Users can update their own preferences." ON public.user_preferences
+  FOR UPDATE TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE TRIGGER set_updated_at_user_preferences
+BEFORE UPDATE ON user_preferences
+FOR EACH ROW EXECUTE PROCEDURE public.update_updated_at_column();
+
+ALTER PUBLICATION supabase_realtime ADD TABLE public.user_preferences;
 
 CREATE OR REPLACE FUNCTION public.is_valid_social_links(links jsonb)
 RETURNS boolean
@@ -172,28 +193,34 @@ CREATE TABLE posts (
   deleted_at TIMESTAMPTZ
 );
 
-CREATE TABLE post_likes (
-  post_id UUID REFERENCES posts(id) ON DELETE CASCADE NOT NULL,
+CREATE TYPE like_entity_type AS ENUM ('event', 'post', 'comment');
+
+CREATE TABLE likes (
+  id UUID DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  entity_type like_entity_type NOT NULL,
+  entity_id UUID NOT NULL,
+  club_id UUID,
   created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-  UNIQUE(post_id, user_id)
+  PRIMARY KEY (id, club_id),
+  CONSTRAINT likes_user_entity_unique UNIQUE (user_id, entity_type, entity_id, club_id)
 );
 
-CREATE INDEX idx_post_likes_post_id ON post_likes(post_id);
-CREATE INDEX idx_post_likes_user_id ON post_likes(user_id);
+CREATE INDEX idx_likes_user_id ON likes(user_id);
+CREATE INDEX idx_likes_entity ON likes(entity_type, entity_id);
 
-ALTER TABLE post_likes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE likes ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Anyone can read post likes."
-  ON post_likes FOR SELECT
+CREATE POLICY "Anyone can read likes."
+  ON likes FOR SELECT
   USING (true);
 
 CREATE POLICY "Users can insert their own likes."
-  ON post_likes FOR INSERT
+  ON likes FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can delete their own likes."
-  ON post_likes FOR DELETE
+  ON likes FOR DELETE
   USING (auth.uid() = user_id);
 
 CREATE TABLE comments (
@@ -224,18 +251,12 @@ CREATE TABLE certificates (
 
 CREATE TABLE saved_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-<<<<<<< HEAD
   event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-=======
-  event_id UUID REFERENCES events(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
->>>>>>> c1cfe2e49db97643322ead8fecc27703942c5c15
   saved_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(event_id, user_id)
 );
 
-<<<<<<< HEAD
 CREATE TABLE polls (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -268,6 +289,7 @@ CREATE TABLE notifications (
   title TEXT NOT NULL,
   message TEXT NOT NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -377,8 +399,6 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.get_upcoming_events_feed(UUID) TO authenticated;
-=======
->>>>>>> c1cfe2e49db97643322ead8fecc27703942c5c15
 -- 3. Row Level Security (RLS)
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clubs ENABLE ROW LEVEL SECURITY;
@@ -391,14 +411,11 @@ ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE certificates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE saved_events ENABLE ROW LEVEL SECURITY;
-<<<<<<< HEAD
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE polls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE poll_options ENABLE ROW LEVEL SECURITY;
 ALTER TABLE poll_votes ENABLE ROW LEVEL SECURITY;
-=======
->>>>>>> c1cfe2e49db97643322ead8fecc27703942c5c15
 
 -- event_co_hosts policies
 CREATE POLICY "Co-hosts are viewable by everyone." ON event_co_hosts FOR SELECT USING (true);
@@ -809,7 +826,7 @@ BEFORE INSERT ON public.comments
 FOR EACH ROW
 EXECUTE FUNCTION public.check_comment_rate_limit();
 
--- Post like count triggers on post_reactions and post_likes
+-- Post like count triggers on post_reactions and likes
 CREATE OR REPLACE FUNCTION public.update_post_like_count()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -819,12 +836,16 @@ AS $$
 DECLARE
   v_post_id UUID;
 BEGIN
-  v_post_id := COALESCE(NEW.post_id, OLD.post_id);
+  IF TG_TABLE_NAME = 'likes' THEN
+    v_post_id := COALESCE(NEW.entity_id, OLD.entity_id);
+  ELSE
+    v_post_id := COALESCE(NEW.post_id, OLD.post_id);
+  END IF;
 
   UPDATE posts
   SET like_count = (
     (SELECT COUNT(*) FROM post_reactions WHERE post_id = v_post_id) +
-    (SELECT COUNT(*) FROM post_likes WHERE post_id = v_post_id)
+    (SELECT COUNT(*) FROM likes WHERE entity_type = 'post' AND entity_id = v_post_id)
   )
   WHERE id = v_post_id;
 
@@ -842,14 +863,16 @@ AFTER DELETE ON post_reactions
 FOR EACH ROW
 EXECUTE FUNCTION public.update_post_like_count();
 
-CREATE TRIGGER trg_post_likes_insert
-AFTER INSERT ON post_likes
+CREATE TRIGGER trg_likes_insert
+AFTER INSERT ON likes
 FOR EACH ROW
+WHEN (NEW.entity_type = 'post')
 EXECUTE FUNCTION public.update_post_like_count();
 
-CREATE TRIGGER trg_post_likes_delete
-AFTER DELETE ON post_likes
+CREATE TRIGGER trg_likes_delete
+AFTER DELETE ON likes
 FOR EACH ROW
+WHEN (OLD.entity_type = 'post')
 EXECUTE FUNCTION public.update_post_like_count();
 
 CREATE OR REPLACE FUNCTION public.update_updated_at_column()
@@ -1092,7 +1115,6 @@ EXECUTE FUNCTION generate_event_short_id();
 ALTER PUBLICATION supabase_realtime ADD TABLE posts;
 ALTER PUBLICATION supabase_realtime ADD TABLE comments;
 ALTER PUBLICATION supabase_realtime ADD TABLE event_rsvps;
-<<<<<<< HEAD
 ALTER PUBLICATION supabase_realtime ADD TABLE saved_events;
 ALTER PUBLICATION supabase_realtime ADD TABLE poll_votes;
 
