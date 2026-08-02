@@ -814,6 +814,16 @@ export default function EventDetailsPage() {
           supabase.rpc("reserve_seat", { p_seat_id: seatId });
         });
       }
+
+      // Eagerly cache event banner if they just RSVP'd
+      if (!variables.hasRsvpd && event?.banner_url && "caches" in window) {
+        window.caches.open("supabase-images-cache").then((cache) => {
+          cache.add(event.banner_url!).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error("Failed to eagerly cache banner image", err);
+          });
+        });
+      }
     },
   });
 
