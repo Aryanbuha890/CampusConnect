@@ -2,8 +2,7 @@ import { useNavigate, useBlocker } from "react-router-dom";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { SiteShell } from "@/components/site/SiteShell";
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
-import { useTheme } from "@/components/theme-provider";
-import { Check, Loader2, X, Plus } from "lucide-react";
+import { Camera, Check, Loader2, X, Plus, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 
@@ -105,7 +104,7 @@ export default function SettingsPage() {
     skillInputRef.current?.focus();
   };
 
-  const handleSkillKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleSkillKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
       handleAddSkill();
@@ -124,19 +123,7 @@ export default function SettingsPage() {
         setUser(user);
       }
     });
-
-      // Credentials verified successfully. Continue with existing deletion flow.
-      setConfirmOpen(false);
-      setDeletePassword("");
-      toast.success("Account deleted successfully.");
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "An unexpected error occurred during verification.";
-      setDeleteError(message);
-    } finally {
-      setIsDeleting(false);
-    }
-  };
+  }, []);
   useEffect(() => {
     // Load appearance settings from localStorage
     const savedThickness = localStorage.getItem("theme-border-thickness");
@@ -172,6 +159,138 @@ export default function SettingsPage() {
     },
     enabled: !!user?.id,
   });
+
+  interface UserBadge {
+    id: string;
+    user_id: string;
+    badge_name: string;
+    awarded_at: string;
+  }
+
+  const { data: badges = [] } = useQuery({
+    queryKey: ["user_badges", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("user_badges")
+        .select("*")
+        .eq("user_id", user?.id);
+      if (error) throw error;
+      return (data || []) as UserBadge[];
+    },
+    enabled: !!user?.id,
+  });
+
+  const { data: latestExportJob, refetch: refetchExportJob } = useQuery({
+    queryKey: ["latest_export_job", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("data_export_jobs")
+        .select("*")
+        .eq("user_id", user?.id)
+        .order("requested_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user?.id,
+  });
+
+  const [isExporting, setIsExporting] = useState(false);
+  const handleRequestDataTakeout = async () => {
+    if (!user) return;
+    setIsExporting(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      // Only require the function name if we configure standard supabase client or we use fetch.
+      // We will use fetch since the existing code uses it.
+      // Note: we can also use supabase.functions.invoke.
+      const { error } = await supabase.functions.invoke("request-data-takeout");
+      if (error) throw error;
+      toast.success("Your data export is being prepared! You will receive an email shortly.");
+      refetchExportJob();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to request data takeout");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const [isWalletDownloading, setIsWalletDownloading] = useState(false);
+
+  const handleAddToAppleWallet = async () => {
+    if (!user) return;
+    setIsWalletDownloading(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await fetch(
+        `${getSupabaseUrl()}/functions/v1/generate-wallet-pass?type=apple&passType=id`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${session?.access_token}`,
+          },
+        },
+      );
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to generate Apple Wallet pass");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "id-card.pkpass";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Wallet pass downloaded successfully!");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to download Wallet pass");
+    } finally {
+      setIsWalletDownloading(false);
+    }
+  };
+
+  const handleAddToGoogleWallet = async () => {
+    if (!user) return;
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const response = await fetch(
+        `${getSupabaseUrl()}/functions/v1/generate-wallet-pass?type=google&passType=id`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${session?.access_token}`,
+          },
+        },
+      );
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to generate Google Wallet pass");
+      }
+
+      const data = await response.json();
+      if (data.url) {
+        window.open(data.url, "_blank");
+        toast.success("Google Wallet link opened!");
+      } else {
+        throw new Error("No URL returned");
+      }
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to generate Google Wallet pass");
+    }
+  };
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema) as any,
@@ -438,11 +557,7 @@ export default function SettingsPage() {
     }
   }, [currentHandle, profile?.handle]);
 
-  const pStats = profile as typeof profile & {
-    lastActivityAt?: string;
-    welcomeSource?: string;
-    processedClaimCommentIds?: number[];
-  };
+  const pStats = profile as Record<string, any> | null;
 
   if (isProfileLoading && !profile) {
     return (
@@ -505,8 +620,52 @@ export default function SettingsPage() {
               onSelect={(id) => form.setValue("avatarTheme", id, { shouldDirty: true })}
             />
 
+            <div className="mb-6 border-2 border-black bg-lime/10 p-4 font-mono text-sm">
+              <p className="font-bold text-black uppercase mb-2">Unlocked Badges</p>
+              {badges.length === 0 ? (
+                <p className="text-xs text-gray-500 font-bold uppercase">
+                  No badges unlocked yet. Keep exploring the campus!
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {badges.map((b) => (
+                    <span
+                      key={b.id}
+                      title={b.badge_name}
+                      className="bg-black text-lime neu-border px-3 py-1 font-mono text-xs font-bold uppercase tracking-wider animate-bounce"
+                    >
+                      🏅 {b.badge_name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <p className="font-bold text-black uppercase mb-2">Digital ID Wallet Passes</p>
+              <p className="text-xs text-gray-700 mb-4">
+                Add your CampusConnect Digital ID Card to your mobile device wallet.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={handleAddToAppleWallet}
+                  disabled={isWalletDownloading}
+                  className="neu-border flex items-center gap-2 bg-white px-4 py-2 font-bold uppercase transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+                >
+                  <CreditCard className="h-4 w-4" />
+                  {isWalletDownloading ? "Adding..." : "Add to Apple Wallet"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddToGoogleWallet}
+                  className="neu-border flex items-center gap-2 bg-white px-4 py-2 font-bold uppercase transition-all hover:scale-105 active:scale-95"
+                >
+                  <CreditCard className="h-4 w-4" />
+                  Add to Google Wallet
+                </button>
+              </div>
+            </div>
+
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit as any)} className="space-y-4">
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField
                     control={form.control}
@@ -715,7 +874,9 @@ export default function SettingsPage() {
                     <input
                       ref={skillInputRef}
                       value={skillInput}
-                      onChange={(e: ChangeEvent<HTMLInputElement>) => setSkillInput(e.target.value)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        setSkillInput(e.target.value)
+                      }
                       onKeyDown={handleSkillKeyDown}
                       placeholder="e.g. React, Python, UI Design…"
                       className="flex-1 border-0 border-b-2 border-black bg-transparent px-1 py-2 font-mono text-sm outline-none focus:bg-lime/40"
@@ -824,6 +985,62 @@ export default function SettingsPage() {
             <Toggle label="Email me about upcoming RSVPs" defaultChecked />
             <Toggle label="Weekly digest of club activity" defaultChecked />
             <Toggle label="New certificates" />
+          </Panel>
+
+          <Panel title="Privacy / Account">
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-bold text-black uppercase mb-1">Download My Data</h3>
+                <p className="font-mono text-xs text-muted-foreground">
+                  Request a copy of all your personal data (RSVPs, posts, comments, etc.). This
+                  process runs in the background. You will receive an email with a secure download
+                  link when it's ready.
+                </p>
+              </div>
+
+              {latestExportJob?.status === "processing" || latestExportJob?.status === "pending" ? (
+                <div className="flex items-center gap-2 p-3 bg-lime/20 border-2 border-black">
+                  <Loader2 className="h-4 w-4 animate-spin text-black" />
+                  <span className="font-mono text-sm font-bold uppercase">
+                    Your export is being prepared...
+                  </span>
+                </div>
+              ) : latestExportJob?.status === "completed" &&
+                new Date(latestExportJob.expires_at) > new Date() ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 p-3 bg-green-100 border-2 border-black">
+                    <Check className="h-4 w-4 text-green-700" />
+                    <span className="font-mono text-sm font-bold uppercase text-green-800">
+                      Export Ready
+                    </span>
+                  </div>
+                  <p className="font-mono text-xs text-black">
+                    Please check your email for the download link, or request a new one.
+                  </p>
+                  <button
+                    onClick={handleRequestDataTakeout}
+                    disabled={isExporting}
+                    className="neu-border neu-press bg-black px-4 py-2 font-mono text-xs font-bold uppercase text-cream disabled:opacity-50"
+                  >
+                    {isExporting ? "Requesting..." : "Request New Export"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={handleRequestDataTakeout}
+                  disabled={isExporting}
+                  className="neu-border neu-press bg-black px-4 py-2 font-mono text-xs font-bold uppercase text-cream disabled:opacity-50"
+                >
+                  {isExporting ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Requesting...
+                    </span>
+                  ) : (
+                    "Download My Data"
+                  )}
+                </button>
+              )}
+            </div>
           </Panel>
 
           <Panel title="Danger zone" tone="bg-red-50">

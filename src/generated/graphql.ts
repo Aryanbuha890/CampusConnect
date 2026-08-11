@@ -68,8 +68,28 @@ export type EventEdge = {
   node: Event;
 };
 
+/**
+ * A message in an event's live chat, delivered in real-time via the
+ * messageAdded subscription.
+ */
+export type Message = {
+  __typename?: "Message";
+  author?: Maybe<Profile>;
+  content: Scalars["String"]["output"];
+  createdAt: Scalars["String"]["output"];
+  eventId: Scalars["ID"]["output"];
+  id: Scalars["ID"]["output"];
+  userId: Scalars["ID"]["output"];
+};
+
 export type Mutation = {
   __typename?: "Mutation";
+  /**
+   * Send a message to an event's live chat. Persists the message and
+   * publishes it to the event's Redis channel so every connected client
+   * receives it via the messageAdded subscription.
+   */
+  addMessage: Message;
   /**
    * Manage event RSVPs with strict row-level locking (SELECT FOR UPDATE)
    * and optimistic concurrency control (version increments).
@@ -77,6 +97,11 @@ export type Mutation = {
    */
   rsvpToEvent: RsvpPayload;
   suspendUsers: Array<Profile>;
+};
+
+export type MutationAddMessageArgs = {
+  content: Scalars["String"]["input"];
+  eventId: Scalars["ID"]["input"];
 };
 
 export type MutationRsvpToEventArgs = {
@@ -162,6 +187,11 @@ export type Query = {
   clubs: Array<Club>;
   event?: Maybe<Event>;
   events: EventConnection;
+  /**
+   * Recent messages in an event's live chat. Used to backfill history after a
+   * dropped WebSocket connection.
+   */
+  messages: Array<Message>;
   post?: Maybe<Post>;
   posts: PostConnection;
   profiles: Array<Profile>;
@@ -175,6 +205,12 @@ export type QueryEventArgs = {
 export type QueryEventsArgs = {
   after?: InputMaybe<Scalars["String"]["input"]>;
   first?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+export type QueryMessagesArgs = {
+  before?: InputMaybe<Scalars["String"]["input"]>;
+  eventId: Scalars["ID"]["input"];
+  limit?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
 export type QueryPostArgs = {
@@ -211,7 +247,21 @@ export type RsvpPayload = {
  */
 export type Subscription = {
   __typename?: "Subscription";
+  /**
+   * Subscribe to new messages in an event's live chat. Yields a Message for
+   * every addMessage mutation published to the event's Redis channel.
+   */
+  messageAdded: Message;
   notificationReceived: Notification;
+};
+
+/**
+ * Subscribe to real-time notifications for a specific user.
+ * Clients receive events when they are mentioned in discussions
+ * or when an event they RSVP'd to is updated.
+ */
+export type SubscriptionMessageAddedArgs = {
+  eventId: Scalars["ID"]["input"];
 };
 
 /**
@@ -225,6 +275,53 @@ export type SubscriptionNotificationReceivedArgs = {
 
 /** Notification types emitted via GraphQL Subscriptions. */
 export type NotificationType = "EVENT_UPDATE" | "GENERIC" | "MENTION";
+
+export type EventChatMessagesQueryVariables = Exact<{
+  eventId: string | number;
+  limit?: number | null | undefined;
+}>;
+
+export type EventChatMessagesQuery = {
+  messages: Array<{
+    id: string;
+    eventId: string;
+    userId: string;
+    content: string;
+    createdAt: string;
+    author: { id: string; full_name: string | null; handle: string | null } | null;
+  }>;
+};
+
+export type SendChatMessageMutationVariables = Exact<{
+  eventId: string | number;
+  content: string;
+}>;
+
+export type SendChatMessageMutation = {
+  addMessage: {
+    id: string;
+    eventId: string;
+    userId: string;
+    content: string;
+    createdAt: string;
+    author: { id: string; full_name: string | null; handle: string | null } | null;
+  };
+};
+
+export type MessageAddedSubscriptionVariables = Exact<{
+  eventId: string | number;
+}>;
+
+export type MessageAddedSubscription = {
+  messageAdded: {
+    id: string;
+    eventId: string;
+    userId: string;
+    content: string;
+    createdAt: string;
+    author: { id: string; full_name: string | null; handle: string | null } | null;
+  };
+};
 
 export type GetEventsConnectionQueryVariables = Exact<{
   first?: number | null | undefined;

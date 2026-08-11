@@ -43,9 +43,17 @@ export function BottomSheet({
   shouldScaleBackground = false,
   fadeFromIndex = 0,
 }: BottomSheetProps) {
+  const scrollRef = React.useRef<HTMLDivElement>(null);
   const handleOpenChange = (open: boolean) => {
     if (!open && onClose) {
       onClose();
+    }
+  };
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    // Intercept drag events when scrolling down internal content
+    if (scrollRef.current && scrollRef.current.scrollTop > 0) {
+      e.stopPropagation();
     }
   };
 

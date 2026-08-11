@@ -14,10 +14,12 @@ import {
   CheckCircle,
   Download,
   Trash2,
+  RefreshCw,
   BarChart3,
 } from "lucide-react";
 import { PromoVideoUploader } from "@/components/PromoVideoUploader";
 import { ClubManageSkeleton } from "@/components/DashboardWidgetSkeleton";
+import DiffViewer from "@/components/Editor/DiffViewer";
 import { ImageCropUpload } from "@/components/ImageCropUpload";
 import { ClubMembersTable } from "@/components/Clubs/ClubMembersTable";
 import { ClubSocialLinksEditor } from "@/components/Clubs/ClubSocialLinksEditor";
@@ -25,6 +27,8 @@ import { ClubColorPicker } from "@/components/Clubs/ClubColorPicker";
 import { isValidHexColor } from "@/lib/clubTheming";
 import { sanitizeHtml } from "@/lib/sanitizeHtml";
 import ClubAnalyticsDashboard from "@/components/clubs/ClubAnalyticsDashboard";
+import PermissionsGrid from "@/components/Clubs/PermissionsGrid";
+import ClubRenewalWizard from "@/components/ClubRenewalWizard"; // <-- NEW IMPORT FOR OUR WIZARD
 import {
   AlertDialog,
   AlertDialogContent,
@@ -49,6 +53,7 @@ interface ServerClub {
   primary_color: string | null;
   secondary_color: string | null;
   version: number;
+  status: string; // <-- Added status to interface
 }
 
 export default function ClubManageRoute() {
@@ -56,9 +61,77 @@ export default function ClubManageRoute() {
   const navigate = useNavigate();
   const supabase = createClient();
   const [user, setUser] = useState<User | null>(null);
+
   const [activeTab, setActiveTab] = useState<
-    "settings" | "members" | "permissions" | "events" | "trash" | "analytics"
+    "settings" | "members" | "permissions" | "events" | "constitution" | "trash" | "analytics"
   >("settings");
+
+  // Mock constitution versions for demo
+  const oldConstitution =
+    "# Club Bylaws\n\n1. Be respectful to everyone.\n2. Meetings are on Tuesdays.";
+  const newConstitution =
+    "# Club Bylaws\n\n1. Be respectful to all members.\n2. Meetings are on Wednesdays at 5 PM.\n3. Have fun!";
+
+  // Form State
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [bannerUrl, setBannerUrl] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [githubRepoUrl, setGithubRepoUrl] = useState("");
+  const [twitterUrl, setTwitterUrl] = useState("");
+  const [instagramUrl, setInstagramUrl] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [socialLinksOrder, setSocialLinksOrder] = useState<string[]>([
+    "website",
+    "twitter",
+    "instagram",
+  ]);
+  const [promoVideoUrl, setPromoVideoUrl] = useState("");
+  const [primaryColor, setPrimaryColor] = useState("");
+  const [secondaryColor, setSecondaryColor] = useState("");
+  const [isConflictDialogOpen, setIsConflictDialogOpen] = useState(false);
+  const [serverClub, setServerClub] = useState<ServerClub | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
+  }, [supabase]);
+
+  // Fetch Club Data
+  const {
+    data: club,
+    isLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ["club_manage", slug],
+    queryFn: async () => {
+      if (!user) throw new Error("Not logged in");
+
+      const { data, error } = await supabase
+        .from("clubs")
+        .select(
+          `
+          id, name, slug, status, description, banner_url, logo_url, visibility, github_repo_url, social_links, social_links_order, promo_video_url, version,
+          club_members (id, role, status, user_id, joined_at, can_edit_events, can_manage_finance, can_remove_members, can_post_news, can_manage_permissions, profiles (full_name, avatar_url, handle)),
+          events (id, title, event_date, max_attendees, event_rsvps(id))
+        `, // <-- Added status to query above
+        )
+        .eq("slug", slug)
+        .single();
+
+      if (error) throw error;
+
+      const currentMember = data.club_members.find(
+        (m: { user_id: string; role: string }) => m.user_id === user.id,
+      );
+      if (!currentMember || currentMember.role !== "admin") {
+        throw new Error("Unauthorized");
+      }
+
+      return data;
+    },
+    enabled: !!user,
+  });
 
   // Fetch Trash Events
   const {
@@ -99,6 +172,7 @@ export default function ClubManageRoute() {
     },
   });
 
+
   // Form State
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -115,8 +189,6 @@ export default function ClubManageRoute() {
     "instagram",
   ]);
   const [promoVideoUrl, setPromoVideoUrl] = useState("");
-  const [primaryColor, setPrimaryColor] = useState("");
-  const [secondaryColor, setSecondaryColor] = useState("");
   const [isConflictDialogOpen, setIsConflictDialogOpen] = useState(false);
   const [serverClub, setServerClub] = useState<ServerClub | null>(null);
 
@@ -138,7 +210,7 @@ export default function ClubManageRoute() {
         .select(
           `
           id, name, slug, description, banner_url, logo_url, visibility, github_repo_url, social_links, social_links_order, promo_video_url, version,
-          club_members (id, role, status, user_id, joined_at, can_edit_events, can_manage_finance, can_remove_members, can_post_news, can_manage_permissions, profiles (full_name, avatar_url, handle)),
+          club_members (id, club_id, role, status, user_id, joined_at, created_at, removed_at, termination_reason, can_edit_events, can_manage_finance, can_remove_members, can_post_news, can_manage_permissions, profiles (full_name, avatar_url, handle)),
           events (id, title, event_date, max_attendees, event_rsvps(id))
         `,
         )
@@ -159,6 +231,7 @@ export default function ClubManageRoute() {
     enabled: !!user,
   });
 
+>>>>>>> 2aad4a1 (issue #3011 solved)
   useEffect(() => {
     if (club) {
       setName(club.name);
@@ -331,7 +404,7 @@ export default function ClubManageRoute() {
         const { data: latest } = await supabase
           .from("clubs")
           .select(
-            "name, description, banner_url, logo_url, promo_video_url, visibility, github_repo_url, social_links, primary_color, secondary_color, version",
+            "name, description, banner_url, logo_url, promo_video_url, visibility, github_repo_url, social_links, primary_color, secondary_color, version, status",
           )
           .eq("id", club!.id)
           .single();
@@ -358,10 +431,7 @@ export default function ClubManageRoute() {
       if (updates.role && typeof updates.role === "string") {
         setOptimisticRoles((prev) => ({ ...prev, [memberId]: updates.role as string }));
       }
-      const { error } = await supabase
-        .from("club_members")
-        .update(updates as TablesUpdate<"club_members">)
-        .eq("id", memberId);
+      const { error } = await supabase.from("club_members").update(updates).eq("id", memberId);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -381,8 +451,7 @@ export default function ClubManageRoute() {
   });
 
   const updatePermissionsMutation = useMutation({
-    mutationFn: async (updates: PermissionUpdate[]) => {
-      // Batch update all permissions in a single transaction
+    mutationFn: async (updates: any[]) => {
       const { error } = await supabase.rpc("batch_update_permissions", {
         updates: updates.map((u) => ({
           member_id: u.memberId,
@@ -422,6 +491,20 @@ export default function ClubManageRoute() {
     );
   }
 
+  // -------------------------------------------------------------
+  // NEW LOGIC: SHOW WIZARD IF CLUB STATUS IS PENDING_RENEWAL
+  // -------------------------------------------------------------
+  if (club.status === "pending_renewal") {
+    return (
+      <SiteShell>
+        <div className="bg-cream min-h-screen py-12 px-4">
+          <ClubRenewalWizard clubId={club.id} />
+        </div>
+      </SiteShell>
+    );
+  }
+
+  // Otherwise, show the normal manage dashboard
   return (
     <SiteShell>
       <div className="bg-cream min-h-screen">
@@ -485,6 +568,16 @@ export default function ClubManageRoute() {
                 <Calendar size={18} /> Events
               </button>
               <button
+                onClick={() => setActiveTab("constitution")}
+                className={`neu-border flex items-center gap-3 p-4 font-mono text-sm font-bold uppercase transition-all ${
+                  activeTab === "constitution"
+                    ? "bg-black text-white hover:-translate-y-1"
+                    : "bg-white text-black hover:bg-gray-50"
+                }`}
+              >
+                <Settings size={18} /> Constitution
+              </button>
+              <button
                 onClick={() => setActiveTab("trash")}
                 className={`neu-border flex items-center gap-3 p-4 font-mono text-sm font-bold uppercase transition-all ${
                   activeTab === "trash"
@@ -499,7 +592,7 @@ export default function ClubManageRoute() {
                 className={`neu-border flex items-center gap-3 p-4 font-mono text-sm font-bold uppercase transition-all ${
                   activeTab === "analytics"
                     ? "bg-black text-white hover:-translate-y-1"
-                    : "bg-white text-black hover:bg-gray-55 hover:bg-gray-50"
+                    : "bg-white text-black hover:bg-gray-50"
                 }`}
               >
                 <BarChart3 size={18} /> Analytics
@@ -674,10 +767,15 @@ export default function ClubManageRoute() {
                           role: string;
                           status: string;
                           user_id: string;
-                          joined_at: string | null;
+                          club_id?: string;
+                          joined_at?: string | null;
+                          created_at?: string;
+                          removed_at?: string | null;
+                          termination_reason?: string | null;
                           profiles: unknown;
                         }) => ({
                           ...m,
+                          club_id: m.club_id || club.id,
                           role: optimisticRoles[m.id] || m.role,
                         }),
                       )}
@@ -831,6 +929,17 @@ export default function ClubManageRoute() {
               </div>
             )}
 
+            {activeTab === "constitution" && (
+              <div className="neu-border bg-white p-6 space-y-6">
+                <h2 className="font-display text-2xl font-bold border-b-2 border-black pb-2">
+                  Review Constitution Updates
+                </h2>
+                <p className="font-mono text-sm text-gray-600 mb-4">
+                  Visual diff of proposed changes to the club bylaws:
+                </p>
+                <DiffViewer oldText={oldConstitution} newText={newConstitution} />
+              </div>
+            )}
             {activeTab === "analytics" && <ClubAnalyticsDashboard clubId={club.id} />}
           </main>
         </div>
