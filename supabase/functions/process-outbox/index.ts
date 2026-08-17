@@ -265,6 +265,61 @@ Deno.serve(async (req) => {
           }
         }
       }
+    } else if (table === "leadership_transitions" && action === "TRANSITION_INITIATED") {
+      const transition = record;
+      if (transition?.id) {
+        console.log(`[Outbox Worker] [Leadership Transition Initiated] Processing transition: ${transition.id}`);
+
+        const { data: incomingUser } = await supabase
+          .from("profiles")
+          .select("first_name, last_name")
+          .eq("id", transition.incoming_user_id)
+          .single();
+
+        const { data: club } = await supabase
+          .from("clubs")
+          .select("name, advisor_email")
+          .eq("id", transition.club_id)
+          .single();
+
+        const clubName = club?.name || "Campus Club";
+        const advisorEmail = club?.advisor_email || "advisor@campusconnect.test";
+        const incomingName = `${incomingUser?.first_name || ""} ${incomingUser?.last_name || ""}`.trim() || "successor";
+
+        const resendApiKey = Deno.env.get("RESEND_API_KEY");
+        const emailBody = {
+          from: "CampusConnect Student Union <su-advisors@campusconnect.app>",
+          to: [advisorEmail],
+          subject: `Action Required: Leadership Transfer for ${clubName}`,
+          html: `
+            <h2>Leadership Transfer Approval Required</h2>
+            <p>The <strong>${clubName}</strong> is attempting to transfer the presidency to <strong>${incomingName}</strong>.</p>
+            <p>This high-risk role transfer is currently pending and will not execute until you formally approve it.</p>
+            <p>Please log into the Admin Dashboard to review and approve/reject this leadership change.</p>
+          `,
+        };
+
+        if (!resendApiKey || Deno.env.get("MOCK_EMAIL") === "true") {
+          console.log(
+            "Mocking advisor transition notification email dispatch. Would have sent to:",
+            advisorEmail,
+            emailBody,
+          );
+        } else {
+          const res = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${resendApiKey}`,
+            },
+            body: JSON.stringify(emailBody),
+          });
+          if (!res.ok) {
+            const errBody = await res.text();
+            console.error("Resend advisor notification email delivery failed:", errBody);
+          }
+        }
+      }
     }
 
     return new Response(JSON.stringify({ success: true, outbox_id }), {

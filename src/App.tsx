@@ -138,6 +138,7 @@ const Recap = lazy(() => import("./routes/recap"));
 const NetworkPage = lazy(() => import("@/pages/NetworkPage"));
 const ReviveClubPage = lazy(() => import("@/pages/ReviveClub"));
 const AdminRevivalRequestsPage = lazy(() => import("@/pages/Admin/AdminRevivalRequests"));
+const AdminLeadershipApprovals = lazy(() => import("./routes/admin.leadership-approvals"));
 const MfaChallenge = lazy(() => import("./routes/mfa-challenge"));
 const ComplianceCheck = lazy(() => import("./routes/compliance-check"));
 const VolunteerRecord = lazy(() => import("./routes/volunteer-record"));
@@ -367,6 +368,7 @@ const router = createBrowserRouter(
           <Route path="/admin/users" element={<AdminUsersPage />} />
           <Route path="/admin/restore" element={<AdminRestorePage />} />
           <Route path="/admin/dlq" element={<AdminDlqPage />} />
+          <Route path="/admin/leadership-approvals" element={<AdminLeadershipApprovals />} />
           <Route path="/unsubscribe" element={<UnsubscribeRoute />} />
           {/* Catch-all route for 404 errors */}
           <Route path="*" element={<NotFound />} />
