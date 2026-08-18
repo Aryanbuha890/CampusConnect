@@ -19,6 +19,7 @@ import { SiteShell } from "@/components/site/SiteShell";
 import { SkeletonEventDetails } from "@/components/events/SkeletonEventDetails";
 import { EventSeatingManager } from "@/components/events/EventSeatingManager";
 import { InteractiveSeatingChart } from "@/components/events/InteractiveSeatingChart";
+import { SeatSwapMarketplace } from "@/components/events/SeatSwapMarketplace";
 import { formatEventDateRange, getGoogleCalendarUrl } from "@/lib/utils";
 import { useBannerColor } from "@/hooks/useBannerColor";
 import { MapSkeleton } from "@/components/ui/MapSkeleton";
@@ -95,6 +96,7 @@ import { AccessibilityBadges } from "@/components/events/AccessibilityBadges";
 import { ReportAccessibilityIssueDialog } from "@/components/events/ReportAccessibilityIssueDialog";
 import { ManageAccessibilityOverridesDialog } from "@/components/events/ManageAccessibilityOverridesDialog";
 import EventFeedbackForm from "@/components/EventFeedbackForm";
+import EventMetricRatingForm from "@/components/events/EventMetricRatingForm";
 import { EventPhotoGallery } from "@/components/EventPhotoGallery";
 import { EventMap } from "@/components/EventMap";
 import { PredictiveTurnout } from "@/components/events/PredictiveTurnout";
@@ -134,8 +136,13 @@ import { CaptchaWidget } from "@/components/CaptchaWidget";
 import { Blurhash } from "react-blurhash";
 import { isValidBlurhash, DEFAULT_FALLBACK_BLURHASH } from "@/lib/blurhashUtils";
 import { EventDescriptionTranslation } from "@/components/events/EventDescriptionTranslation";
+ feat/3293-dynamic-ticket-pricing
+import { TicketPricingTimeline } from "@/components/events/TicketPricingTimeline";
+
 import { LiveNowBadge } from "@/components/events/LiveNowBadge";
 import { isEventLive } from "@/lib/utils";
+import { LiveGPSBusTracker } from "@/components/events/LiveGPSBusTracker";
+ main
 
 /**
  * Hero banner for the event detail page.
@@ -544,6 +551,7 @@ export default function EventDetailsPage() {
           id, title, description, event_date, start_date, end_date, location, banner_url, created_by, venue_id, accessibility_features,
           is_high_risk, status, short_id, max_attendees, requires_approval, category_id, tags, version, version_vector, blurhash,
           latitude, longitude, geofencing_enabled, geofence_radius_meters, accommodation_deadline,
+          rating_metrics,
           profiles (full_name, email),
           clubs (name, slug, logo_url, primary_color, secondary_color),
           event_rsvps (id, user_id, checked_in, status),
@@ -1740,6 +1748,10 @@ export default function EventDetailsPage() {
                 showDetails={true}
               />
             </div>
+            
+            <div className="mt-6 max-w-md">
+              <TicketPricingTimeline eventId={event.id} />
+            </div>
 
             {hasRsvpd && myRsvpId && !isCheckedIn && !hasEnded && (
               <div className="mt-6 max-w-md">
@@ -2128,6 +2140,14 @@ export default function EventDetailsPage() {
 
             {/* Transportation / Carpool Matching (Issue #2877) */}
             <div className="mt-8">
+              <LiveGPSBusTracker
+                eventId={eventId}
+                isCaptain={isOrganizer}
+                eventTitle={event.title}
+              />
+            </div>
+
+            <div className="mt-8">
               <CarpoolMatchingSection eventId={eventId} user={user} />
             </div>
 
@@ -2177,6 +2197,7 @@ export default function EventDetailsPage() {
             <EventSeatingManager eventId={event.id} isOrganizer={isOrganizer} />
 
             <InteractiveSeatingChart eventId={event.id} user={user} />
+            <SeatSwapMarketplace eventId={event.id} user={user} />
 
             {/* Interactive venue map layout for attendees */}
             {venueMapData && venueMapData.nodes && venueMapData.nodes.length > 0 ? (
@@ -2349,7 +2370,12 @@ export default function EventDetailsPage() {
               hasRsvpd &&
               event.end_date &&
               new Date(event.end_date).getTime() < Date.now() && (
-                <div className="mt-10">
+                <div className="mt-10 space-y-8">
+                  <EventMetricRatingForm
+                    eventId={event.id}
+                    user={user}
+                    metrics={(event as Record<string, unknown>).rating_metrics as string[] | undefined}
+                  />
                   <EventFeedbackForm eventId={event.id} user={user} />
                 </div>
               )}

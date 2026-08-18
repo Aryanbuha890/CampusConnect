@@ -10,13 +10,13 @@ import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left";
 import Star from "lucide-react/dist/esm/icons/star";
 import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import { EventFinancesSection } from "@/components/analytics/EventFinancesSection";
+import { EventMetricRadarChart } from "@/components/analytics/EventMetricRadarChart";
 import { EventPodcastPanel } from "@/components/audio/EventPodcastPanel";
 import { WaitlistChurnPredictionCard } from "@/components/events/WaitlistChurnPredictionCard";
- feat/poll-results-export
 import { EventPollsExportSection } from "@/components/polls/EventPollsExportSection";
 
 import { EventAnnouncerBroadcast } from "@/components/events/EventAnnouncerBroadcast";
- main
+import { ManageTicketTiers } from "@/components/events/ManageTicketTiers";
 
 const EChartsWrapper = lazy(() => import("@/components/analytics/EChartsWrapper"));
 
@@ -520,6 +520,11 @@ function EventLiveSupportPanel({ eventId }: { eventId: string }) {
                 </p>
               </div>
             </div>
+
+            <div className="mt-6 border-2 border-black bg-white p-4">
+              <p className="font-mono text-xs font-bold uppercase mb-2">Rating Dimensions</p>
+              <EventMetricRadarChart eventId={eventId!} />
+            </div>
           </div>
 
           <div className="mb-8">
@@ -643,6 +648,11 @@ function EventLiveSupportPanel({ eventId }: { eventId: string }) {
               </Suspense>
             </div>
           </div>
+          
+          <div className="mb-8 border-2 border-black bg-white p-5 shadow-[4px_4px_0_0_#000]">
+            <ManageTicketTiers eventId={eventId!} />
+          </div>
+
           <EventFinancesSection eventId={eventId!} />
           <EventPodcastPanel eventId={eventId!} />
         </div>
