@@ -152,10 +152,7 @@ const TourManager = lazy(() => import("./routes/tours.manage"));
 const TourMode = lazy(() => import("./routes/tours.$tourId"));
 const BundleCheckoutRoute = lazy(() => import("./pages/BundleCheckoutPage"));
 const BundleDetailsRoute = lazy(() => import("./pages/BundleDetailsPage"));
- feature/3022-club-hibernation-workflow
-
-
- main
+const EquipmentMarketplace = lazy(() => import("./routes/equipment"));
 const ReferralDashboardRoute = lazy(() => import("./pages/ReferralDashboard"));
 const ReferralLeaderboardRoute = lazy(() => import("./pages/ReferralLeaderboard"));
 // ---------------------------------------------------------------------------
@@ -372,6 +369,7 @@ const router = createBrowserRouter(
           <Route path="/admin/restore" element={<AdminRestorePage />} />
           <Route path="/admin/dlq" element={<AdminDlqPage />} />
           <Route path="/admin/leadership-approvals" element={<AdminLeadershipApprovals />} />
+          <Route path="/equipment-rentals" element={<EquipmentMarketplace />} />
           <Route path="/unsubscribe" element={<UnsubscribeRoute />} />
           {/* Catch-all route for 404 errors */}
           <Route path="*" element={<NotFound />} />
