@@ -18,6 +18,7 @@ import {
   Key,
   Code,
   Gavel,
+  DollarSign,
 } from "lucide-react";
 import { PromoVideoUploader } from "@/components/PromoVideoUploader";
 import { ClubManageSkeleton } from "@/components/DashboardWidgetSkeleton";
@@ -26,6 +27,7 @@ import { ImageCropUpload } from "@/components/ImageCropUpload";
 import { ClubMembersTable } from "@/components/Clubs/ClubMembersTable";
 import { ClubRolesManager } from "@/components/Clubs/ClubRolesManager";
 import { ClubAnalyticsDashboard } from "@/components/Clubs/ClubAnalyticsDashboard";
+import { ClubBudgetDashboard } from "@/components/Clubs/ClubBudgetDashboard";
 import { ManageMerch } from "@/components/Clubs/Merchandise/ManageMerch";
 import { QuorumPanel } from "@/components/Clubs/QuorumPanel";
 import {
@@ -71,6 +73,7 @@ export default function ClubManageRoute() {
     | "meetings"
     | "merchandise"
     | "developer"
+    | "finances"
   >(
     initialTab === "analytics"
       ? "analytics"
@@ -86,7 +89,9 @@ export default function ClubManageRoute() {
               ? "merchandise"
               : initialTab === "developer"
                 ? "developer"
-                : "settings",
+                : initialTab === "finances"
+                  ? "finances"
+                  : "settings",
   );
 
   // Form State
@@ -553,6 +558,16 @@ export default function ClubManageRoute() {
               >
                 <Key size={18} /> API Keys
               </button>
+              <button
+                onClick={() => setActiveTab("finances")}
+                className={`neu-border flex items-center gap-3 p-4 font-mono text-sm font-bold uppercase transition-all ${
+                  activeTab === "finances"
+                    ? "bg-black text-white hover:-translate-y-1"
+                    : "bg-white text-black hover:bg-gray-50"
+                }`}
+              >
+                <DollarSign size={18} /> Finances
+              </button>
             </nav>
           </aside>
 
@@ -842,6 +857,7 @@ export default function ClubManageRoute() {
               </div>
             )}
             {activeTab === "analytics" && <ClubAnalyticsDashboard clubId={club.id} />}
+            {activeTab === "finances" && <ClubBudgetDashboard clubId={club.id} />}
             {activeTab === "meetings" && <QuorumPanel clubId={club.id} />}
             {activeTab === "merchandise" && <ManageMerch clubId={club.id} />}
             {activeTab === "developer" && (
