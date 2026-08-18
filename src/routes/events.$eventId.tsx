@@ -2196,6 +2196,8 @@ export default function EventDetailsPage() {
 
             <EventSeatingManager eventId={event.id} isOrganizer={isOrganizer} />
 
+            <CrowdDensityMeter eventId={event.id} />
+
             <InteractiveSeatingChart eventId={event.id} user={user} />
             <SeatSwapMarketplace eventId={event.id} user={user} />
 
