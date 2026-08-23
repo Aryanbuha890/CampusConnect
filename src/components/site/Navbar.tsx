@@ -102,6 +102,10 @@ export function Navbar() {
       to: localizedPath(i18n.language, "/messages"),
       label: t("navbar.messages"),
     },
+    {
+      to: localizedPath(i18n.language, "/api-playground"),
+      label: "Playground",
+    },
   ];
 
   const landingLinks = [

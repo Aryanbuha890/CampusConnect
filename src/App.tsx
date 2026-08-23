@@ -146,6 +146,11 @@ const AdminLeadershipApprovals = lazy(() => import("./routes/admin.leadership-ap
 const MfaChallenge = lazy(() => import("./routes/mfa-challenge"));
 const ComplianceCheck = lazy(() => import("./routes/compliance-check"));
 const VolunteerRecord = lazy(() => import("./routes/volunteer-record"));
+<<<<<<< Updated upstream
+=======
+const FacilityDashboard = lazy(() => import("./routes/facility-dashboard"));
+const ApiPlayground = lazy(() => import("./routes/api-playground"));
+>>>>>>> Stashed changes
 
 const EventsLayout = lazy(() => import("./pages/Events/EventsLayout"));
 const LazyEventsIndex = lazy(() => import("./pages/Events/EventsList"));
@@ -325,6 +330,11 @@ const router = createBrowserRouter(
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/settings" element={<Settings />} />
+<<<<<<< Updated upstream
+=======
+            <Route path="/facility-dashboard" element={<FacilityDashboard />} />
+            <Route path="/api-playground" element={<ApiPlayground />} />
+>>>>>>> Stashed changes
             <Route path="/settings/data" element={<SettingsData />} />
             <Route path="/recap" element={<Recap />} />
             <Route path="/volunteer-record" element={<VolunteerRecord />} />
