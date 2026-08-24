@@ -129,6 +129,7 @@ const MessagesRoute = lazy(() => import("./routes/messages"));
 const PendingClubsAdmin = lazy(() => import("./routes/admin.clubs.pending"));
 const AnalyticsAdmin = lazy(() => import("./routes/admin.analytics"));
 const ConstitutionReviewAdmin = lazy(() => import("./routes/admin.constitutions"));
+const FeedbackSafetyAdmin = lazy(() => import("./routes/admin.feedback-safety"));
 const AdminReportsPage = lazy(() => import("./routes/admin.reports"));
 const AdminUsersPage = lazy(() => import("./routes/admin.users"));
 const AdminRestorePage = lazy(() => import("./routes/admin.restore"));
@@ -143,9 +144,7 @@ const EventDashboard = lazy(() => import("./routes/events.$eventId.dashboard"));
 const EventGantt = lazy(() => import("./routes/events.$eventId.gantt"));
 const EventFloorplan = lazy(() => import("./routes/events.$eventId.floorplan"));
 const LostFound = lazy(() => import("./routes/lost-found"));
-const Leaderboard = lazy(() =>
-  import("./components/Leaderboard").then((m) => ({ default: m.Leaderboard })),
-);
+const Leaderboard = lazy(() => import("./routes/leaderboard"));
 const Recap = lazy(() => import("./routes/recap"));
 const NetworkPage = lazy(() => import("@/pages/NetworkPage"));
 const ReviveClubPage = lazy(() => import("@/pages/ReviveClub"));
@@ -158,6 +157,7 @@ const FacilityDashboard = lazy(() => import("./routes/facility-dashboard"));
 
 const EventsLayout = lazy(() => import("./pages/Events/EventsLayout"));
 const LazyEventsIndex = lazy(() => import("./pages/Events/EventsList"));
+const LazyTicketingDemo = lazy(() => import("./pages/Events/CampusEventTicketingPage"));
 const LazyEventDetails = lazy(() => import("./pages/Events/EventDetail"));
 const EmptyState = lazy(() => import("./pages/Events/EmptyState"));
 const TourManager = lazy(() => import("./routes/tours.manage"));
@@ -171,7 +171,9 @@ const CampusWellnessHub = lazy(() => import("./pages/wellness/CampusWellnessHub"
 const ReferralDashboardRoute = lazy(() => import("./pages/ReferralDashboard"));
 const ReferralLeaderboardRoute = lazy(() => import("./pages/ReferralLeaderboard"));
 const AudioTourRoute = lazy(() => import("./routes/audio-tour"));
-const PollOverlayRoute = lazy(() => import("./routes/overlay.poll.$poll_id")); // ---------------------------------------------------------------------------
+const DynamicEarlyBirdAnalyticsRoute = lazy(() => import("./routes/events.$id.early-bird-analytics"));
+
+// ---------------------------------------------------------------------------
 // Animated Outlet Wrapper for Framer Motion transitions with Skeleton Fallback
 // ---------------------------------------------------------------------------
 function AnimatedOutlet() {
@@ -204,7 +206,6 @@ const router = createBrowserRouter(
     <>
       <Route path="/overlay/poll/:poll_id" element={<PollOverlayRoute />} />
       <Route element={<Layout />} errorElement={<RouteErrorBoundary />}>
-        {" "}
         <Route element={<MfaChallengeGuard />}>
           <Route element={<AnimatedOutlet />}>
             <Route index element={<Index />} />
@@ -374,6 +375,7 @@ const router = createBrowserRouter(
           {/* Catch-all route for 404 errors */}
           <Route path="*" element={<NotFound />} />
         </Route>
+        <Route path="/gallery" element={<GalleryPage />} />
       </Route>
     </>,
   ),
