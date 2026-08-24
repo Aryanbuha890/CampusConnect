@@ -21,6 +21,8 @@ import { EventFeedbackLlmSummaryCard } from "@/components/events/EventFeedbackLl
 import { EventWeatherWarningBanner } from "@/components/events/EventWeatherWarningBanner";
 import { ManageTicketTiers } from "@/components/events/ManageTicketTiers";
 import { OrganizerNoiseBroadcaster } from "@/components/events/OrganizerNoiseBroadcaster";
+import { EventBroadcastFallbackPanel } from "@/components/events/EventBroadcastFallbackPanel";
+import { MissingPhotoIncentiveWidget } from "@/components/events/MissingPhotoIncentiveWidget";
 
 const EChartsWrapper = lazy(() => import("@/components/analytics/EChartsWrapper"));
 
@@ -96,7 +98,7 @@ export default function EventDashboard() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("events")
-        .select("title, is_public_showcase")
+        .select("title, is_public_showcase, cover_image_url")
         .eq("id", eventId!)
         .single();
       if (error) throw error;
@@ -417,6 +419,14 @@ function EventLiveSupportPanel({ eventId }: { eventId: string }) {
                 eventTitle={eventData?.title || "Outdoor Event"}
               />
             </div>
+            <div className="mt-4">
+              <MissingPhotoIncentiveWidget
+                eventId={eventId!}
+                eventTitle={eventData?.title || "Event"}
+                hasPhoto={!!eventData?.cover_image_url}
+                onPhotoUploaded={() => refetchEventData()}
+              />
+            </div>
             <div className="flex flex-wrap gap-3 items-center mt-4 sm:mt-0">
               {/* Public Showcase Toggle */}
               <label className="flex items-center gap-2 font-mono text-xs font-bold uppercase cursor-pointer select-none bg-blue-50 dark:bg-blue-950/20 border-2 border-black dark:border-white p-2 hover:bg-blue-100 dark:hover:bg-blue-900/20 transition-colors">
@@ -614,6 +624,10 @@ function EventLiveSupportPanel({ eventId }: { eventId: string }) {
 
           <div className="mb-8">
             <OrganizerNoiseBroadcaster eventId={eventId!} />
+          </div>
+
+          <div className="mb-8">
+            <EventBroadcastFallbackPanel eventId={eventId!} isOrganizer />
           </div>
 
           <div className="mb-8">
