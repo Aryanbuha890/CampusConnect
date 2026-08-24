@@ -19,6 +19,7 @@ export interface CachedTicket {
     qr_code_url: string;
     qr_code_data: string; // The raw string encoded in the QR
     status: 'active' | 'used' | 'expired';
+    assigned_dietary_meal?: string | null;
 }
 
 interface UseOfflineTicketsReturn {
@@ -138,6 +139,7 @@ export function useOfflineTickets(): UseOfflineTicketsReturn {
                 .select(`
           id,
           event_id,
+          assigned_dietary_meal,
           events (
             id,
             title,
@@ -173,7 +175,8 @@ export function useOfflineTickets(): UseOfflineTicketsReturn {
                     event_location: event.location || 'TBA',
                     qr_code_url: qrCodeUrl,
                     qr_code_data: qrData,
-                    status: 'active'
+                    status: 'active',
+                    assigned_dietary_meal: rsvp.assigned_dietary_meal
                 };
 
                 fetchedTickets.push(ticket);

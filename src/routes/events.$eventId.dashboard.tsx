@@ -14,6 +14,7 @@ import { EventMetricRadarChart } from "@/components/analytics/EventMetricRadarCh
 import { EventPodcastPanel } from "@/components/audio/EventPodcastPanel";
 import { WaitlistChurnPredictionCard } from "@/components/events/WaitlistChurnPredictionCard";
 import { EventPollsExportSection } from "@/components/polls/EventPollsExportSection";
+import { DietaryForecastPanel } from "@/components/events/DietaryForecastPanel";
 
 import { EventAnnouncerBroadcast } from "@/components/events/EventAnnouncerBroadcast";
 import { EventFeedbackLlmSummaryCard } from "@/components/events/EventFeedbackLlmSummaryCard";
@@ -492,6 +493,11 @@ function EventLiveSupportPanel({ eventId }: { eventId: string }) {
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Dietary Yield Forecast & Optimizer */}
+          <div className="mb-8">
+            <DietaryForecastPanel eventId={eventId!} />
           </div>
           <div className="mb-8 border-2 border-black bg-yellow-100 p-5 shadow-[4px_4px_0_0_#000]">
             <div className="flex items-center gap-2">

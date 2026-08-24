@@ -45,6 +45,11 @@ export const TicketCard: React.FC<TicketCardProps> = ({
                 <h3 className="text-xl font-black leading-tight mb-2">
                     {ticket.event_title}
                 </h3>
+                {ticket.assigned_dietary_meal && (
+                    <div className="bg-yellow-350 text-black border-2 border-black px-2.5 py-1 text-xs font-mono font-bold uppercase inline-block mb-3 shadow-[2px_2px_0_0_#000]" data-testid="dietary-yield-badge">
+                        🎉 You get a {ticket.assigned_dietary_meal} meal!
+                    </div>
+                )}
                 <div className="flex items-center gap-4 text-sm text-indigo-100">
                     <div className="flex items-center gap-1.5">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
