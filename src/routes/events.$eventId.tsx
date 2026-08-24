@@ -28,6 +28,7 @@ const EventMap = lazy(() => import("@/components/EventMap").then((m) => ({ defau
 import { formatEventDateRange } from "@/lib/utils";
 import { AddToCalendarDropdown } from "@/components/events/AddToCalendarDropdown";
 import { EventCapacityGauge } from "@/components/events/EventCapacityGauge";
+import { TicketPricingTimeline } from "@/components/events/TicketPricingTimeline";
 import { formatDateLong } from "@/lib/dateFormatter";
 import { getRsvpIdempotencyKey, clearRsvpIdempotencyKey } from "@/lib/rsvpIdempotency";
 import { toast } from "sonner";
@@ -452,6 +453,25 @@ export default function EventDetailsPage() {
   const [isDecryptedModalOpen, setIsDecryptedModalOpen] = useState(false);
   const { downloadTicket, isGenerating: isTicketGenerating } = useTicketDownload();
   const { visitorId } = useDeviceFingerprint();
+  const [hasTiersOrSurge, setHasTiersOrSurge] = useState(false);
+
+  useEffect(() => {
+    if (!event?.id) return;
+    const checkPricing = async () => {
+      if (event.base_price !== null && event.base_price !== undefined) {
+        setHasTiersOrSurge(true);
+        return;
+      }
+      const { count } = await supabase
+        .from("ticket_tiers")
+        .select("id", { count: "exact", head: true })
+        .eq("event_id", event.id);
+      if (count && count > 0) {
+        setHasTiersOrSurge(true);
+      }
+    };
+    void checkPricing();
+  }, [event?.id, event?.base_price, supabase]);
 
   const handleViewAccommodation = async (rsvpId: string) => {
     setIsDecrypting(true);
@@ -632,7 +652,7 @@ clubs (name, slug, logo_url, primary_color, secondary_color),          event_rsv
           venues (
             name, building, capacity, accessibility_features
           )
-          id, title, description, event_date, start_date, end_date, location, banner_url, created_by, is_high_risk, is_high_demand, status, short_id, max_attendees, requires_approval, category_id, tags, version, version_vector, blurhash, latitude, longitude, geofencing_enabled, geofence_radius_meters, accommodation_deadline, dress_code,
+          id, title, description, event_date, start_date, end_date, location, banner_url, created_by, is_high_risk, is_high_demand, status, short_id, max_attendees, requires_approval, category_id, tags, version, version_vector, blurhash, latitude, longitude, geofencing_enabled, geofence_radius_meters, accommodation_deadline, dress_code, base_price, surge_multiplier,
           profiles (full_name, email),
 clubs (name, slug, logo_url, primary_color, secondary_color),          event_metrics (views)
         `,
@@ -1777,6 +1797,10 @@ clubs (name, slug, logo_url, primary_color, secondary_color),          event_met
               />
             </div>
 
+            <div id="ticket-pricing-section" className="mt-6 max-w-md">
+              <TicketPricingTimeline eventId={event.id} />
+            </div>
+
             {hasRsvpd && myRsvpId && !isCheckedIn && !hasEnded && (
               <div className="mt-6 max-w-md">
                 <GeofencedCheckInButton
@@ -1788,7 +1812,11 @@ clubs (name, slug, logo_url, primary_color, secondary_color),          event_met
             )}
 
             <div className="mt-8 hidden items-center gap-4 md:flex">
-              {hasRsvpd ? (
+              {hasTiersOrSurge ? (
+                <div className="text-sm font-mono text-slate-500 bg-slate-50 border-2 border-black p-3 rounded-lg">
+                  🎟️ Paid Ticketed Event — See Pricing Timeline to buy a ticket
+                </div>
+              ) : hasRsvpd ? (
                 <Button
                   onClick={handleRsvpClick}
                   disabled={toggleRsvp.isPending}
@@ -1905,6 +1933,8 @@ clubs (name, slug, logo_url, primary_color, secondary_color),          event_met
                     </div>
                   )}
                 </div>
+              ) : hasTiersOrSurge ? (
+                null
               ) : (
                 <div className="flex flex-col gap-1">
                   <Button
@@ -3006,7 +3036,17 @@ clubs (name, slug, logo_url, primary_color, secondary_color),          event_met
               </span>
             )}
           </div>
-          {hasRsvpd ? (
+          {hasTiersOrSurge ? (
+            <Button
+              onClick={() => {
+                const el = document.getElementById("ticket-pricing-section");
+                if (el) el.scrollIntoView({ behavior: "smooth" });
+              }}
+              variant="primary"
+            >
+              Buy Ticket
+            </Button>
+          ) : hasRsvpd ? (
             <Button onClick={handleRsvpClick} disabled={toggleRsvp.isPending} variant="secondary">
               {toggleRsvp.isPending ? "Updating..." : "RSVP'd ✓"}
             </Button>
