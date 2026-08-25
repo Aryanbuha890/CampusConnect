@@ -3,6 +3,8 @@ import Stripe from "https://esm.sh/stripe@14.16.0?target=deno";
 import { rateLimiter } from "../shared/rateLimiter.ts";
 import { signTicket } from "../_shared/ticket-crypto.ts";
 
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+
 const stripeSecret = Deno.env.get("STRIPE_WEBHOOK_SECRET") || Deno.env.get("WEBHOOK_SECRET") || "";
 
 const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
@@ -102,7 +104,51 @@ Deno.serve(async (req) => {
     if (stripeEvent.type === "checkout.session.completed") {
       const session = stripeEvent.data.object;
 
-      // 5a. Crowdfunding campaign donation
+      // 5a. Silent auction winner payment
+      if (session.metadata?.type === "auction_winner") {
+        const winnerId = session.metadata?.auction_winner_id;
+        const winnerUserId = session.metadata?.winner_user_id;
+        if (!winnerId || !winnerUserId) {
+          return new Response("Missing auction winner metadata", { status: 400 });
+        }
+
+        const { data: winner, error: winnerError } = await supabase
+          .from("auction_winners")
+          .select("id, winner_user_id, winning_bid, payment_status")
+          .eq("id", winnerId)
+          .maybeSingle();
+        if (
+          winnerError ||
+          !winner ||
+          winner.winner_user_id !== winnerUserId ||
+          winner.payment_status !== "pending" ||
+          (session.amount_total ?? 0) !== winner.winning_bid
+        ) {
+          console.error(`[Webhook Ingestion] Invalid auction winner payment ${winnerId}.`);
+          return new Response("Invalid auction winner payment", { status: 400 });
+        }
+
+        const { error: winnerUpdateError } = await supabase
+          .from("auction_winners")
+          .update({ payment_status: "paid" })
+          .eq("id", winnerId)
+          .eq("payment_status", "pending");
+        if (winnerUpdateError) {
+          console.error(
+            `[DB Error] Failed to mark auction winner ${winnerId} paid:`,
+            winnerUpdateError,
+          );
+          return new Response("Failed to record auction payment", { status: 500 });
+        }
+
+        console.log(`[Webhook Ingestion] Marked auction winner ${winnerId} as paid.`);
+        return new Response(JSON.stringify({ status: "success", eventId }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // 5b. Crowdfunding campaign donation
       if (session.metadata?.type === "campaign_donation") {
         const campaignId = session.metadata?.campaign_id;
         if (!campaignId) {
@@ -112,10 +158,33 @@ Deno.serve(async (req) => {
 
         const isAnonymous = session.metadata?.is_anonymous === "true";
         const amountCents = session.amount_total ?? 0;
+        const matchId = session.metadata?.match_id;
+
+        // Validate the one-time invitation before recording the payment. Checkout
+        // already performs this check, but the webhook must not trust metadata.
+        if (matchId) {
+          const { data: invitation, error: invitationError } = await supabase
+            .from("campaign_donation_matches")
+            .select("id, campaign_id, alumni_user_id, requested_amount_cents, status")
+            .eq("id", matchId)
+            .eq("status", "invited")
+            .maybeSingle();
+
+          if (
+            invitationError ||
+            !invitation ||
+            invitation.campaign_id !== campaignId ||
+            invitation.alumni_user_id !== session.metadata?.donor_id ||
+            invitation.requested_amount_cents !== amountCents
+          ) {
+            console.error(`[Webhook Ingestion] Invalid campaign donation match ${matchId}.`);
+            return new Response("Invalid campaign donation match", { status: 400 });
+          }
+        }
 
         // Insert as 'succeeded' directly — the campaign_donation_delta trigger
         // increments crowdfunding_campaigns.current_amount_cents automatically.
-        const { error: insertDonationError } = await supabase
+        const { data: donation, error: insertDonationError } = await supabase
           .from("campaign_donations")
           .insert({
             campaign_id: campaignId,
@@ -128,14 +197,56 @@ Deno.serve(async (req) => {
             stripe_payment_intent_id:
               typeof session.payment_intent === "string" ? session.payment_intent : null,
             status: "succeeded",
-          });
+          })
+          .select("id")
+          .single();
 
-        if (insertDonationError) {
+        if (insertDonationError || !donation) {
           console.error(
             `[DB Error] Failed to record donation for campaign ${campaignId}:`,
             insertDonationError,
           );
           return new Response("Failed to record campaign donation", { status: 500 });
+        }
+
+        if (matchId) {
+          const { error: linkError } = await supabase.rpc("link_campaign_donation_match", {
+            p_match_id: matchId,
+            p_donation_id: donation.id,
+          });
+          if (linkError) {
+            console.error(`[DB Error] Failed to link alumni match ${matchId}:`, linkError);
+          }
+        } else {
+          const { data: matches, error: matchError } = await supabase.rpc(
+            "create_campaign_donation_matches",
+            { p_donation_id: donation.id, p_pool_size: 10 },
+          );
+          if (matchError) {
+            console.error(
+              `[DB Error] Failed to create alumni matches for donation ${donation.id}:`,
+              matchError,
+            );
+          } else if (matches && matches.length > 0) {
+            const notificationPromise = supabase.functions.invoke("notify-alumni-donation-match", {
+              body: { sourceDonationId: donation.id },
+            });
+            const handleNotificationResult = async () => {
+              const { error: notificationError } = await notificationPromise;
+              if (notificationError) {
+                console.error(
+                  `[Notification Error] Failed to notify alumni for donation ${donation.id}:`,
+                  notificationError,
+                );
+              }
+            };
+
+            if (typeof EdgeRuntime !== "undefined") {
+              EdgeRuntime.waitUntil(handleNotificationResult());
+            } else {
+              await handleNotificationResult();
+            }
+          }
         }
 
         console.log(
@@ -183,14 +294,14 @@ Deno.serve(async (req) => {
                 rsvpData.ticket_id,
                 rsvpData.event_id,
                 profile.public_key,
-                rsvpData.version || 1
+                rsvpData.version || 1,
               );
 
               await supabase
                 .from("event_rsvps")
                 .update({
                   owner_public_key: profile.public_key,
-                  signature: signature
+                  signature: signature,
                 })
                 .eq("id", rsvpId);
             }
@@ -198,25 +309,30 @@ Deno.serve(async (req) => {
         } catch (cryptoErr) {
           console.error("Failed to sign ticket in webhook:", cryptoErr);
         }
-      } else if (session.metadata?.tier_id && session.metadata?.event_id && session.metadata?.user_id) {
+      } else if (
+        session.metadata?.tier_id &&
+        session.metadata?.event_id &&
+        session.metadata?.user_id
+      ) {
         // Dynamic Pricing Tiers (Issue #3293)
         // Record the purchased ticket tier and price
-        const { error: insertRsvpError } = await supabase
-          .from("event_rsvps")
-          .insert({
-             event_id: session.metadata.event_id,
-             user_id: session.metadata.user_id,
-             status: "PAID",
-             ticket_tier_id: session.metadata.tier_id,
-             paid_amount_cents: session.amount_total ?? 0,
-             payment_intent_id: typeof session.payment_intent === "string" ? session.payment_intent : null,
-          });
+        const { error: insertRsvpError } = await supabase.from("event_rsvps").insert({
+          event_id: session.metadata.event_id,
+          user_id: session.metadata.user_id,
+          status: "PAID",
+          ticket_tier_id: session.metadata.tier_id,
+          paid_amount_cents: session.amount_total ?? 0,
+          payment_intent_id:
+            typeof session.payment_intent === "string" ? session.payment_intent : null,
+        });
 
         if (insertRsvpError) {
           console.error(`[DB Error] Failed to insert RSVP for dynamic tier:`, insertRsvpError);
           return new Response("Failed to insert RSVP", { status: 500 });
         }
-        console.log(`[Webhook Ingestion] Successfully recorded RSVP for tier ${session.metadata.tier_id}.`);
+        console.log(
+          `[Webhook Ingestion] Successfully recorded RSVP for tier ${session.metadata.tier_id}.`,
+        );
 
         // Decentralized Ticketing: Sign the new ticket
         try {
@@ -239,14 +355,14 @@ Deno.serve(async (req) => {
                 rsvpData.ticket_id,
                 session.metadata.event_id,
                 profile.public_key,
-                rsvpData.version || 1
+                rsvpData.version || 1,
               );
 
               await supabase
                 .from("event_rsvps")
                 .update({
                   owner_public_key: profile.public_key,
-                  signature: signature
+                  signature: signature,
                 })
                 .eq("id", rsvpData.id);
             }

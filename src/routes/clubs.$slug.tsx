@@ -23,7 +23,11 @@ import { AudioReactiveBackground } from "@/components/media/AudioReactiveBackgro
 import LazyHydrate from "@/components/LazyHydrate";
 import { NotFoundPage as NotFound } from "@/components/NotFoundPage";
 import { MerchStore } from "@/components/Clubs/Merchandise/MerchStore";
+
+import { CrowdfundingCampaignSection } from "@/components/Clubs/Crowdfunding/CrowdfundingCampaignSection";
+ upstream/main
 import { ClubTransparencyLedger } from "@/components/Clubs/ClubTransparencyLedger";
+import { ClubKnowledgeBaseSection } from "@/components/Clubs/ClubKnowledgeBaseSection";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -44,7 +48,12 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { createClubProfileQueryOptions } from "@/lib/clubProfileQuery";
-import { useClubPermissions } from "@/hooks/useClubPermissions";
+import { getClubThemeVars } from "@/lib/clubTheming";
+import { ClubHeader } from "@/components/Clubs/ClubHeader";
+import { ClubJobsSection } from "@/components/Clubs/ClubJobsSection";
+import { WidgetRenderer } from "@/components/widgets/WidgetRenderer";
+import { FlipCard } from "@/components/ui/FlipCard";
+import { useSearchParams } from "react-router-dom";
 
 interface ClubMemberProfile {
   full_name: string;
@@ -430,6 +439,14 @@ export default function ClubProfile() {
                     Meeting Notes
                   </Link>
                 )}
+                {(membership?.role === "treasurer" || membership?.role === "admin") && (
+                  <Link
+                    to={`/clubs/${club.slug}/treasurer`}
+                    className="neu-border neu-press bg-green-400 px-5 py-3 font-mono text-sm font-bold uppercase transition-transform hover:-translate-y-1 inline-block shrink-0 text-center"
+                  >
+                    Treasurer Dashboard
+                  </Link>
+                )}
                 {can("club.manage") && (
                   <Link
                     to={`/clubs/${club.slug}/manage`}
@@ -742,6 +759,31 @@ export default function ClubProfile() {
 
         <ClubTransparencyLedger clubId={club.id} />
 
+ HEAD
+        <section className="px-4 py-12 md:px-6">
+          <div className="mx-auto max-w-6xl">
+            <CrowdfundingCampaignSection clubId={club.id} />
+          </div>
+        </section>
+ feature/rsvp-prereq-blocker-3946
+ feature/rsvp-prereq-blocker-3946
+ feature/rsvp-prereq-blocker-3946
+
+ feature/geofenced-checkin-4035
+ feature/geofenced-checkin-4035
+ main
+
+ feature/assistant-persistence-2044
+ main
+
+
+        <section className="px-4 py-6 md:px-6">
+          <div className="mx-auto max-w-6xl">
+            <ClubKnowledgeBaseSection clubId={club.id} />
+          </div>
+        </section>
+
+ main
         <section className="px-4 py-12 md:px-6 bg-gray-50 border-t-2 border-black">
           <div className="mx-auto max-w-6xl">
             <div className="mb-6 flex items-center justify-between">

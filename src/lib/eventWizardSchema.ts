@@ -27,6 +27,8 @@ export const dateLocationStepBaseSchema = z.object({
   startDate: z.string().min(1, "Start date is required"),
   endDate: z.string().min(1, "End date is required"),
   location: z.string().min(3, "Location is required").max(200, "Location is too long"),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
   isVirtual: z.boolean().default(false),
   meetingUrl: z.string().url("Please enter a valid meeting URL").optional().or(z.literal("")),
   isOutdoor: z.boolean().default(false),
@@ -149,6 +151,7 @@ export const customizationsStepSchema = z.object({
   isFeatured: z.boolean().default(false),
   allowWaitlist: z.boolean().default(true),
   sendReminderEmails: z.boolean().default(true),
+  isLiveAlbumActive: z.boolean().default(false),
 });
 export type CustomizationsStepData = z.infer<typeof customizationsStepSchema>;
 
@@ -172,6 +175,8 @@ export const eventWizardMasterSchema = z
     startDate: dateLocationStepBaseSchema.shape.startDate,
     endDate: dateLocationStepBaseSchema.shape.endDate,
     location: dateLocationStepBaseSchema.shape.location,
+    latitude: dateLocationStepBaseSchema.shape.latitude,
+    longitude: dateLocationStepBaseSchema.shape.longitude,
     isVirtual: dateLocationStepBaseSchema.shape.isVirtual,
     meetingUrl: dateLocationStepBaseSchema.shape.meetingUrl,
     isOutdoor: dateLocationStepBaseSchema.shape.isOutdoor,
@@ -188,6 +193,7 @@ export const eventWizardMasterSchema = z
     isFeatured: customizationsStepSchema.shape.isFeatured,
     allowWaitlist: customizationsStepSchema.shape.allowWaitlist,
     sendReminderEmails: customizationsStepSchema.shape.sendReminderEmails,
+    isLiveAlbumActive: customizationsStepSchema.shape.isLiveAlbumActive,
   })
   // Cross-field refinement: end date > start date.
   .refine(
@@ -264,6 +270,8 @@ export const DEFAULT_EVENT_WIZARD_DATA: EventWizardFormData = {
   startDate: "",
   endDate: "",
   location: "",
+  latitude: null,
+  longitude: null,
   isVirtual: false,
   meetingUrl: "",
   isOutdoor: false,
@@ -278,4 +286,5 @@ export const DEFAULT_EVENT_WIZARD_DATA: EventWizardFormData = {
   isFeatured: false,
   allowWaitlist: true,
   sendReminderEmails: true,
+  isLiveAlbumActive: false,
 };
