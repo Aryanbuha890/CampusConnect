@@ -265,14 +265,19 @@ Deno.serve(async (req) => {
       if (rsvpId) {
         const { error: updateRsvpError } = await supabase
           .from("event_rsvps")
-          .update({ status: "PAID" })
+          .update({
+            status: "PAID",
+            paid_amount_cents: session.amount_total ?? 0,
+            payment_intent_id:
+              typeof session.payment_intent === "string" ? session.payment_intent : null,
+          })
           .eq("id", rsvpId);
 
         if (updateRsvpError) {
           console.error(`[DB Error] Failed to update RSVP ${rsvpId} to PAID:`, updateRsvpError);
           return new Response("Failed to update RSVP status", { status: 500 });
         }
-        console.log(`[Webhook Ingestion] Successfully set RSVP ${rsvpId} status to PAID.`);
+        console.log(`[Webhook Ingestion] Successfully set RSVP ${rsvpId} status to PAID with payment info.`);
 
         // Decentralized Ticketing: Sign the ticket
         try {

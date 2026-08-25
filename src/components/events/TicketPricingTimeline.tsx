@@ -37,6 +37,8 @@ export function TicketPricingTimeline({
   const [dynamicPrice, setDynamicPrice] = useState<number | null>(null);
   const [ticketsUntilIncrease, setTicketsUntilIncrease] = useState<number | null>(null);
   const [flashSale, setFlashSale] = useState<ActiveFlashSale | null>(null);
+  const [hasJson, setHasJson] = useState(false);
+  const [selectedTierName, setSelectedTierName] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -92,68 +94,110 @@ export function TicketPricingTimeline({
     const fetchTiers = async () => {
       setLoading(true);
       try {
-        // Fetch event's dynamic pricing details
+        // Fetch event's dynamic pricing details and JSON ticket_tiers
         const { data: eventData, error: eventError } = await supabase
           .from("events")
-          .select("base_price, surge_multiplier")
+          .select("base_price, surge_multiplier, ticket_tiers")
           .eq("id", eventId)
           .single();
 
-        if (!eventError && eventData && eventData.base_price !== null) {
-          setIsDynamic(true);
-          const { data: dynPrice } = await supabase.rpc("calculate_current_price", {
-            p_event_id: eventId,
-          });
-          setDynamicPrice(dynPrice);
+        const jsonTiers = eventData?.ticket_tiers;
+        const hasJsonTiers = jsonTiers && Array.isArray(jsonTiers) && jsonTiers.length > 0;
 
-          const { data: tUntilIncrease } = await supabase.rpc("tickets_until_price_increase", {
-            p_event_id: eventId,
-          });
-          setTicketsUntilIncrease(tUntilIncrease);
-        }
+        if (hasJsonTiers) {
+          const { data: rsvps, error: rsvpError } = await supabase
+            .from("event_rsvps")
+            .select("ticket_tier_name")
+            .eq("event_id", eventId)
+            .neq("status", "CANCELLED");
 
-        const { data: saleData } = await supabase
-          .from("active_event_flash_sales")
-          .select(
-            "id, event_id, ticket_tier_id, discount_percent, original_price_cents, sale_price_cents, starts_at, expires_at, status",
-          )
-          .eq("event_id", eventId)
-          .maybeSingle();
-        if (mounted) setFlashSale(saleData as ActiveFlashSale | null);
+          if (rsvpError) throw rsvpError;
 
-        const { data, error } = await supabase
-          .from("ticket_tiers")
-          .select("id, name, price, capacity, start_date, end_date")
-          .eq("event_id", eventId)
-          .order("start_date", { ascending: true, nullsFirst: false });
+          const counts = (rsvps || []).reduce((acc: any, rsvp) => {
+            if (rsvp.ticket_tier_name) {
+              acc[rsvp.ticket_tier_name] = (acc[rsvp.ticket_tier_name] || 0) + 1;
+            }
+            return acc;
+          }, {});
 
-        if (error) throw error;
+          const mappedTiers = jsonTiers.map((t: any, idx: number) => ({
+            id: `json-${idx}`,
+            name: t.name,
+            price: Math.round(t.price * 100), // convert dollars to cents
+            capacity: t.quantity,
+            start_date: null,
+            end_date: null,
+            sold_count: counts[t.name] || 0,
+          }));
 
-        // Also fetch sold counts to determine capacity
-        const { data: rsvps, error: rsvpError } = await supabase
-          .from("event_rsvps")
-          .select("ticket_tier_id")
-          .eq("event_id", eventId);
-
-        if (rsvpError) throw rsvpError;
-
-        const counts = (rsvps || []).reduce((acc: any, rsvp) => {
-          if (rsvp.ticket_tier_id) {
-            acc[rsvp.ticket_tier_id] = (acc[rsvp.ticket_tier_id] || 0) + 1;
+          if (mounted) {
+            setTiers(mappedTiers);
+            setHasJson(true);
+            const firstAvailable = mappedTiers.find((t: any) => t.capacity === null || t.sold_count < t.capacity);
+            if (firstAvailable) {
+              setSelectedTierName(firstAvailable.name);
+            }
           }
-          return acc;
-        }, {});
+        } else {
+          if (!eventError && eventData && eventData.base_price !== null) {
+            setIsDynamic(true);
+            const { data: dynPrice } = await supabase.rpc("calculate_current_price", {
+              p_event_id: eventId,
+            });
+            setDynamicPrice(dynPrice);
 
-        setTiers(
-          (data || []).map((t) => ({
-            ...t,
-            sold_count: counts[t.id] || 0,
-          })),
-        );
+            const { data: tUntilIncrease } = await supabase.rpc("tickets_until_price_increase", {
+              p_event_id: eventId,
+            });
+            setTicketsUntilIncrease(tUntilIncrease);
+          }
+
+          const { data: saleData } = await supabase
+            .from("active_event_flash_sales")
+            .select(
+              "id, event_id, ticket_tier_id, discount_percent, original_price_cents, sale_price_cents, starts_at, expires_at, status",
+            )
+            .eq("event_id", eventId)
+            .maybeSingle();
+          if (mounted) setFlashSale(saleData as ActiveFlashSale | null);
+
+          const { data, error } = await supabase
+            .from("ticket_tiers")
+            .select("id, name, price, capacity, start_date, end_date")
+            .eq("event_id", eventId)
+            .order("start_date", { ascending: true, nullsFirst: false });
+
+          if (error) throw error;
+
+          // Also fetch sold counts to determine capacity
+          const { data: rsvps, error: rsvpError } = await supabase
+            .from("event_rsvps")
+            .select("ticket_tier_id")
+            .eq("event_id", eventId);
+
+          if (rsvpError) throw rsvpError;
+
+          const counts = (rsvps || []).reduce((acc: any, rsvp) => {
+            if (rsvp.ticket_tier_id) {
+              acc[rsvp.ticket_tier_id] = (acc[rsvp.ticket_tier_id] || 0) + 1;
+            }
+            return acc;
+          }, {});
+
+          if (mounted) {
+            setTiers(
+              (data || []).map((t) => ({
+                ...t,
+                sold_count: counts[t.id] || 0,
+              })),
+            );
+            setHasJson(false);
+          }
+        }
       } catch (err) {
         console.error("Failed to load ticket pricing info", err);
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted && mounted) setLoading(false);
       }
     };
     fetchTiers();
@@ -177,6 +221,7 @@ export function TicketPricingTimeline({
           body: JSON.stringify({
             eventId,
             quantity: 1,
+            tierName: hasJson ? selectedTierName : undefined,
           }),
         },
       );
@@ -281,6 +326,44 @@ export function TicketPricingTimeline({
             </p>
           </div>
         </div>
+      ) : hasJson ? (
+        <div className="flex flex-col gap-3 my-4">
+          <label className="text-xs font-bold uppercase tracking-wider text-black text-left block">
+            Select Ticket Option
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {tiers.map((t) => {
+              const isSoldOut = t.capacity !== null && (t.sold_count || 0) >= t.capacity;
+              const isSelected = selectedTierName === t.name;
+
+              return (
+                <button
+                  key={t.name}
+                  type="button"
+                  disabled={isSoldOut}
+                  onClick={() => setSelectedTierName(t.name)}
+                  className={`border-2 border-black p-4 text-left font-mono relative transition-all rounded-none ${
+                    isSoldOut
+                      ? "bg-neutral-100 opacity-50 cursor-not-allowed border-neutral-400 text-neutral-400"
+                      : isSelected
+                        ? "bg-lime text-black shadow-[4px_4px_0px_#000]"
+                        : "bg-white text-black hover:bg-neutral-50 shadow-[2px_2px_0px_#000] hover:shadow-[4px_4px_0px_#000]"
+                  }`}
+                >
+                  <div className="font-display text-lg font-black uppercase">
+                    {t.name}
+                  </div>
+                  <div className="text-sm font-bold mt-1">
+                    ${(t.price / 100).toFixed(2)} USD
+                  </div>
+                  <div className="text-xs mt-2 font-semibold">
+                    {isSoldOut ? "SOLD OUT" : `${t.capacity! - t.sold_count!} left`}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       ) : (
         <div className="relative pt-8 pb-4">
           {/* Timeline line */}
@@ -336,7 +419,7 @@ export function TicketPricingTimeline({
       )}
 
       <div className="mt-8 pt-6 border-t-2 border-black/10 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div>
+        <div className="text-left">
           {flashSale ? (
             <p className="font-mono text-sm text-black/70">
               Flash Sale:{" "}
@@ -356,7 +439,24 @@ export function TicketPricingTimeline({
                 preferredCurrency={preferredCurrency}
               />
             </p>
-          ) : activeTier ? (
+          ) : hasJson && selectedTierName ? (() => {
+            const selTier = tiers.find(t => t.name === selectedTierName);
+            return selTier ? (
+              <p className="font-mono text-sm text-black/70">
+                Selected Option: <strong>{selTier.name}</strong> at $
+                {(selTier.price / 100).toFixed(2)} USD
+                <CurrencyEstimate
+                  amountUsd={selTier.price / 100}
+                  preferredCurrency={preferredCurrency}
+                />
+                {selTier.capacity !== null && (
+                  <span className="block mt-1">
+                    Capacity: {selTier.capacity - (selTier.sold_count || 0)} remaining
+                  </span>
+                )}
+              </p>
+            ) : null;
+          })() : activeTier ? (
             <p className="font-mono text-sm text-black/70">
               Current Tier: <strong>{activeTier.name}</strong> at $
               {(activeTier.price / 100).toFixed(2)} USD
@@ -381,7 +481,7 @@ export function TicketPricingTimeline({
           size="lg"
           className="w-full sm:w-auto font-display font-black uppercase tracking-widest bg-lime hover:bg-lime/80 text-black border-2 border-black shadow-[2px_2px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={handlePurchase}
-          disabled={(!activeTier && !isDynamic && !flashSale) || purchasing}
+          disabled={(!activeTier && !hasJson && !isDynamic && !flashSale) || (hasJson && !selectedTierName) || purchasing}
         >
           {purchasing
             ? "Processing..."
@@ -389,9 +489,11 @@ export function TicketPricingTimeline({
               ? `Buy Ticket for $${(flashSale.sale_price_cents / 100).toFixed(2)} USD`
               : isDynamic && dynamicPrice !== null
                 ? `Buy Ticket for $${(dynamicPrice / 100).toFixed(2)} USD`
-                : activeTier
-                  ? `Buy Ticket for $${(activeTier.price / 100).toFixed(2)} USD`
-                  : "Unavailable"}
+                : hasJson && selectedTierName
+                  ? `Buy Ticket for $${((tiers.find(t => t.name === selectedTierName)?.price || 0) / 100).toFixed(2)} USD`
+                  : activeTier
+                    ? `Buy Ticket for $${(activeTier.price / 100).toFixed(2)} USD`
+                    : "Unavailable"}
         </Button>
       </div>
     </div>

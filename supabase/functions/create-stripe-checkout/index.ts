@@ -46,25 +46,15 @@ serve(async (req) => {
         if (!user) throw new Error("Unauthorized");
 
         // 2. Parse Request
-        const { eventId, quantity } = await req.json();
+        const { eventId, quantity, tierName } = await req.json();
         if (!eventId || !quantity || quantity < 1) {
             throw new Error("Invalid event ID or quantity");
         }
 
-        // 3. Fetch Active Ticket Tier & Validate Capacity
-        const { data: activeTiers, error: tierError } = await supabase.rpc('get_active_ticket_tier', {
-            p_event_id: eventId
-        });
-
-        if (tierError || !activeTiers || activeTiers.length === 0) {
-            throw new Error("No ticket tier is currently available");
-        }
-
-        const tier = activeTiers[0];
-
-        const { data: event, error: eventError } = await supabase
+        // 3. Fetch Event to check for JSON ticket tiers
+        const { data: event, error: eventError } = await adminSupabase
             .from("events")
-            .select("title")
+            .select("title, ticket_tiers")
             .eq("id", eventId)
             .single();
 
@@ -72,17 +62,67 @@ serve(async (req) => {
             throw new Error("Event not found");
         }
 
-        const remainingCapacity = tier.capacity !== null ? tier.capacity - tier.sold_count : Infinity;
+        const jsonTiers = event.ticket_tiers;
+        const hasJsonTiers = jsonTiers && Array.isArray(jsonTiers) && jsonTiers.length > 0;
 
-        if (quantity > remainingCapacity) {
-            throw new Error(`Only ${remainingCapacity} tickets remaining for the current tier.`);
+        let basePriceCents = 0;
+        let lineItemName = "";
+        let rsvpId = null;
+        let tier = null;
+        let tierPayment = null;
+
+        if (hasJsonTiers) {
+            if (!tierName) {
+                throw new Error("tierName is required for this event");
+            }
+
+            const requestedTier = jsonTiers.find((t: any) => t.name === tierName);
+            if (!requestedTier) {
+                throw new Error(`Ticket tier ${tierName} not found`);
+            }
+
+            basePriceCents = Math.round(requestedTier.price * 100);
+            lineItemName = `${event.title} - ${tierName}`;
+
+            // Concurrency-safe reservation
+            const { data, error: reserveError } = await adminSupabase.rpc("check_and_reserve_ticket_tier", {
+                p_event_id: eventId,
+                p_tier_name: tierName,
+                p_quantity: quantity,
+                p_user_id: user.id
+            });
+
+            if (reserveError || !data) {
+                throw new Error(reserveError?.message || "Ticket tier is sold out.");
+            }
+            rsvpId = data;
+        } else {
+            // Standard ticket tier logic
+            const { data: activeTiers, error: tierError } = await supabase.rpc('get_active_ticket_tier', {
+                p_event_id: eventId
+            });
+
+            if (tierError || !activeTiers || activeTiers.length === 0) {
+                throw new Error("No ticket tier is currently available");
+            }
+
+            tier = activeTiers[0];
+            const remainingCapacity = tier.capacity !== null ? tier.capacity - tier.sold_count : Infinity;
+
+            if (quantity > remainingCapacity) {
+                throw new Error(`Only ${remainingCapacity} tickets remaining for the current tier.`);
+            }
+
+            basePriceCents = tier.price;
+            lineItemName = `${event.title} - ${tier.name}`;
+
+            const { data: tp } = await adminSupabase
+                .from("ticket_tiers")
+                .select("stripe_price_id")
+                .eq("id", tier.id)
+                .maybeSingle();
+            tierPayment = tp;
         }
-
-        const { data: tierPayment } = await adminSupabase
-            .from("ticket_tiers")
-            .select("stripe_price_id")
-            .eq("id", tier.id)
-            .maybeSingle();
 
         const { data: activeFlashSale } = await adminSupabase
             .from("event_flash_sales")
@@ -96,7 +136,7 @@ serve(async (req) => {
 
         // 4. Calculate Discount. Flash sales are deliberately not stackable
         // with group discounts so the organizer's advertised price is exact.
-        const rules: DiscountRule[] = activeFlashSale ? [] : tier.discount_rules || [];
+        const rules: DiscountRule[] = activeFlashSale ? [] : (tier ? (tier.discount_rules || []) : []);
         const sortedRules = [...rules].sort((a, b) => b.min_qty - a.min_qty);
 
         let applicableDiscount = 0;
@@ -114,9 +154,8 @@ serve(async (req) => {
             .eq("id", eventId)
             .single();
 
-        let basePriceCents = tier.price;
         let isDynamic = false;
-        if (!eventDetailsError && eventDetails && eventDetails.base_price !== null) {
+        if (!hasJsonTiers && !eventDetailsError && eventDetails && eventDetails.base_price !== null) {
             const { data: dynamicPrice, error: priceError } = await supabase.rpc('calculate_current_price', {
                 p_event_id: eventId
             });
@@ -145,7 +184,7 @@ serve(async (req) => {
                             ? `${event.title} (Flash Sale)`
                             : isDynamic
                                 ? `${event.title} (Dynamic Price)`
-                                : `${event.title} - ${tier.name}`,
+                                : lineItemName,
                         description: `${quantity} ticket(s)`,
                     },
                     unit_amount: basePriceCents,
@@ -168,31 +207,41 @@ serve(async (req) => {
         }
 
         // 6. Create Stripe Checkout Session
-        const session = await stripe.checkout.sessions.create({
-            payment_method_types: ["card"],
-            line_items: lineItems,
-            mode: "payment",
-            success_url: `${req.headers.get("origin")}/events/${eventId}/tickets/success?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${req.headers.get("origin")}/events/${eventId}/tickets`,
-            metadata: {
-                user_id: user.id,
-                tier_id: tier.id,
-                quantity: quantity.toString(),
-                discount_applied: applicableDiscount.toString(),
-                flash_sale_id: activeFlashSale?.id || "",
-                flash_sale_discount: activeFlashSale?.discount_percent?.toString() || "",
-                event_id: eventId
-            },
-            // Enforce "All or Nothing" refund policy for group purchases
-            payment_intent_data: {
-                setup_future_usage: 'off_session',
-            }
-        });
+        try {
+            const session = await stripe.checkout.sessions.create({
+                payment_method_types: ["card"],
+                line_items: lineItems,
+                mode: "payment",
+                success_url: `${req.headers.get("origin")}/events/${eventId}/tickets/success?session_id={CHECKOUT_SESSION_ID}`,
+                cancel_url: `${req.headers.get("origin")}/events/${eventId}/tickets`,
+                metadata: {
+                    user_id: user.id,
+                    tier_id: tier ? tier.id : "",
+                    tier_name: hasJsonTiers ? tierName : "",
+                    quantity: quantity.toString(),
+                    discount_applied: applicableDiscount.toString(),
+                    flash_sale_id: activeFlashSale?.id || "",
+                    flash_sale_discount: activeFlashSale?.discount_percent?.toString() || "",
+                    event_id: eventId,
+                    rsvp_id: rsvpId || ""
+                },
+                // Enforce "All or Nothing" refund policy for group purchases
+                payment_intent_data: {
+                    setup_future_usage: 'off_session',
+                }
+            });
 
-        return new Response(
-            JSON.stringify({ sessionId: session.id, url: session.url }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
-        );
+            return new Response(
+                JSON.stringify({ sessionId: session.id, url: session.url }),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+            );
+        } catch (stripeErr) {
+            if (rsvpId) {
+                // Roll back the reservation if Stripe session creation fails
+                await adminSupabase.from("event_rsvps").delete().eq("id", rsvpId);
+            }
+            throw stripeErr;
+        }
 
     } catch (error: any) {
         console.error("[StripeCheckout] Error:", error);
