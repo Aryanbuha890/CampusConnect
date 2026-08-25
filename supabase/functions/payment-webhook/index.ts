@@ -2,6 +2,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import Stripe from "https://esm.sh/stripe@14.16.0?target=deno";
 import { rateLimiter } from "../shared/rateLimiter.ts";
 import { signTicket } from "../_shared/ticket-crypto.ts";
+import { encode } from "https://deno.land/std@0.177.0/encoding/base64.ts";
+import React from "npm:react@18";
+import { Document, Page, Text, View, StyleSheet, renderToBuffer } from "npm:@react-pdf/renderer@3";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -253,6 +256,49 @@ Deno.serve(async (req) => {
           `[Webhook Ingestion] Recorded $${(amountCents / 100).toFixed(2)} donation to campaign ${campaignId}.`,
         );
 
+        // Retrieve club details from campaign_id to check for tax exempt status
+        const { data: campaign, error: campaignError } = await supabase
+          .from("crowdfunding_campaigns")
+          .select("title, club_id")
+          .eq("id", campaignId)
+          .single();
+
+        if (campaignError || !campaign) {
+          console.error(`[Webhook Ingestion] Failed to fetch campaign ${campaignId}:`, campaignError);
+        } else {
+          const { data: club, error: clubError } = await supabase
+            .from("clubs")
+            .select("name, is_tax_exempt, tax_id_ein")
+            .eq("id", campaign.club_id)
+            .single();
+
+          if (clubError || !club) {
+            console.error(`[Webhook Ingestion] Failed to fetch club ${campaign.club_id}:`, clubError);
+          } else if (club.is_tax_exempt) {
+            const donorEmail = session.customer_details?.email || 
+              (session.metadata?.donor_id 
+                ? (await supabase.from("profiles").select("email").eq("id", session.metadata.donor_id).maybeSingle()).data?.email 
+                : null);
+
+            const receiptPromise = generateAndSendTaxReceipt({
+              supabase,
+              donationId: donation.id,
+              donorEmail,
+              donorName: session.customer_details?.name || session.metadata?.display_name || "Generous Donor",
+              amountCents,
+              clubName: club.name,
+              ein: club.tax_id_ein,
+              clubId: campaign.club_id,
+            });
+
+            if (typeof EdgeRuntime !== "undefined") {
+              EdgeRuntime.waitUntil(receiptPromise);
+            } else {
+              await receiptPromise;
+            }
+          }
+        }
+
         return new Response(JSON.stringify({ status: "success", eventId }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -485,3 +531,243 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+const styles = StyleSheet.create({
+  page: { padding: 50, fontFamily: "Helvetica", fontSize: 11, color: "#1a1a1a" },
+  header: { borderBottomWidth: 2, borderBottomColor: "#4f46e5", paddingBottom: 10, marginBottom: 20 },
+  title: { fontSize: 24, fontWeight: "bold", color: "#4f46e5", textTransform: "uppercase" },
+  section: { marginBottom: 15 },
+  label: { fontWeight: "bold", fontSize: 10, color: "#666", textTransform: "uppercase" },
+  value: { fontSize: 13, marginBottom: 5 },
+  divider: { borderBottomWidth: 1, borderBottomColor: "#e5e7eb", marginVertical: 15 },
+  legalText: { fontSize: 10, color: "#4b5563", fontStyle: "italic", marginTop: 20 },
+  thankYou: { fontSize: 14, fontWeight: "bold", color: "#111827", marginTop: 15 }
+});
+
+const ReceiptDocument = ({ date, amount, donorName, clubName, ein }: any) => {
+  return React.createElement(
+    Document,
+    null,
+    React.createElement(
+      Page,
+      { size: "A4", style: styles.page },
+      React.createElement(
+        View,
+        { style: styles.header },
+        React.createElement(Text, { style: styles.title }, "Donation Receipt")
+      ),
+      React.createElement(
+        View,
+        { style: styles.section },
+        React.createElement(Text, { style: styles.label }, "Date of Donation"),
+        React.createElement(Text, { style: styles.value }, date)
+      ),
+      React.createElement(
+        View,
+        { style: styles.section },
+        React.createElement(Text, { style: styles.label }, "Donor Name"),
+        React.createElement(Text, { style: styles.value }, donorName)
+      ),
+      React.createElement(
+        View,
+        { style: styles.section },
+        React.createElement(Text, { style: styles.label }, "Receiving Organization"),
+        React.createElement(Text, { style: styles.value }, clubName),
+        ein ? React.createElement(Text, { style: styles.value }, `EIN: ${ein}`) : null
+      ),
+      React.createElement(
+        View,
+        { style: styles.section },
+        React.createElement(Text, { style: styles.label }, "Contribution Amount"),
+        React.createElement(Text, { style: styles.value }, `$${(amount / 100).toFixed(2)}`)
+      ),
+      React.createElement(View, { style: styles.divider }),
+      React.createElement(
+        Text,
+        { style: styles.thankYou },
+        "Thank you for your generous support!"
+      ),
+      React.createElement(
+        Text,
+        { style: styles.legalText },
+        "No goods or services were provided in exchange for this contribution. Your contribution is tax-deductible to the extent allowed by law. Please retain this receipt for your IRS records."
+      )
+    )
+  );
+};
+
+async function generateAndSendTaxReceipt({
+  supabase,
+  donationId,
+  donorEmail,
+  donorName,
+  amountCents,
+  clubName,
+  ein,
+  clubId,
+}: {
+  supabase: any;
+  donationId: string;
+  donorEmail: string | null;
+  donorName: string;
+  amountCents: number;
+  clubName: string;
+  ein: string | null;
+  clubId: string;
+}) {
+  try {
+    console.log(`[Receipt Generation] Creating tax receipt for donation ${donationId}...`);
+    
+    // 1. Generate PDF using @react-pdf/renderer
+    const dateStr = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const element = React.createElement(ReceiptDocument, {
+      date: dateStr,
+      amount: amountCents,
+      donorName,
+      clubName,
+      ein,
+    });
+
+    const pdfBuffer = await renderToBuffer(element);
+    console.log(`[Receipt Generation] PDF generated successfully. Size: ${pdfBuffer.length} bytes`);
+
+    // 2. Upload to Supabase Storage in 'club_vaults' bucket
+    const fileName = `tax_receipt_${donationId}.pdf`;
+    const filePath = `${clubId}/Financials/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("club_vaults")
+      .upload(filePath, pdfBuffer, {
+        contentType: "application/pdf",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`Failed to upload receipt to storage: ${uploadError.message}`);
+    }
+    console.log(`[Receipt Generation] PDF uploaded to storage at: ${filePath}`);
+
+    // 3. Find executive/uploader to register upload in vault_documents
+    const { data: member } = await supabase
+      .from("club_members")
+      .select("user_id")
+      .eq("club_id", clubId)
+      .order("role", { ascending: false }) // president/treasurer first
+      .limit(1)
+      .maybeSingle();
+
+    const uploaderId = member?.user_id || "00000000-0000-0000-0000-000000000000";
+
+    const { error: dbError } = await supabase
+      .from("vault_documents")
+      .insert({
+        club_id: clubId,
+        file_name: fileName,
+        file_path: filePath,
+        file_size: pdfBuffer.length,
+        mime_type: "application/pdf",
+        category: "Financials",
+        uploaded_by: uploaderId,
+      });
+
+    if (dbError) {
+      throw new Error(`Failed to record receipt in vault_documents: ${dbError.message}`);
+    }
+
+    // Write audit log entry
+    await supabase.from("vault_audit_log").insert({
+      club_id: clubId,
+      user_id: uploaderId,
+      action: "UPLOAD",
+      file_name: fileName,
+    });
+    console.log(`[Receipt Generation] Receipt recorded in vault_documents`);
+
+    // 4. Email the receipt to the donor
+    if (donorEmail) {
+      const emailProvider = Deno.env.get("EMAIL_PROVIDER") || "sendgrid";
+      const sendgridApiKey = Deno.env.get("SENDGRID_API_KEY");
+      const resendApiKey = Deno.env.get("RESEND_API_KEY");
+      const base64Content = encode(pdfBuffer);
+
+      const subject = `Donation Receipt - ${clubName}`;
+      const htmlBody = `
+        <p>Dear ${donorName},</p>
+        <p>Thank you so much for your donation of $${(amountCents / 100).toFixed(2)} to <strong>${clubName}</strong>.</p>
+        <p>Your official tax-exempt donation receipt is attached to this email.</p>
+        <p>Best regards,<br/>${clubName} Team</p>
+      `;
+
+      if (emailProvider === "resend" && resendApiKey) {
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${resendApiKey}`,
+          },
+          body: JSON.stringify({
+            from: "CampusConnect <welcome@campusconnect.app>",
+            to: [donorEmail],
+            subject: subject,
+            html: htmlBody,
+            attachments: [
+              {
+                filename: fileName,
+                content: base64Content,
+              },
+            ],
+          }),
+        });
+
+        if (!res.ok) {
+          const resData = await res.text();
+          console.error(`[Receipt Generation] Resend API Error:`, resData);
+        } else {
+          console.log(`[Receipt Generation] Receipt emailed via Resend to ${donorEmail}`);
+        }
+      } else if (emailProvider === "sendgrid" && sendgridApiKey) {
+        const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sendgridApiKey}`,
+          },
+          body: JSON.stringify({
+            personalizations: [
+              {
+                to: [{ email: donorEmail, name: donorName }],
+              },
+            ],
+            from: { email: "welcome@campusconnect.app", name: "CampusConnect" },
+            subject: subject,
+            content: [{ type: "text/html", value: htmlBody }],
+            attachments: [
+              {
+                content: base64Content,
+                type: "application/pdf",
+                filename: fileName,
+                disposition: "attachment",
+              },
+            ],
+          }),
+        });
+
+        if (!res.ok) {
+          const resData = await res.text();
+          console.error(`[Receipt Generation] SendGrid API Error:`, resData);
+        } else {
+          console.log(`[Receipt Generation] Receipt emailed via SendGrid to ${donorEmail}`);
+        }
+      } else {
+        console.log(`[Receipt Generation] [Mock Mode] Would send tax receipt to ${donorEmail} with attached PDF`);
+      }
+    }
+  } catch (error: any) {
+    console.error(`[Receipt Generation] Error generating or sending tax receipt for donation ${donationId}:`, error);
+  }
+}
