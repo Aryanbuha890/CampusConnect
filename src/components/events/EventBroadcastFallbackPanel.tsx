@@ -1,5 +1,13 @@
-import { useEffect, useState, useRef } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, Radio, RefreshCw, Video, Captions } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  Radio,
+  RefreshCw,
+  Video,
+  Captions,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -11,6 +19,10 @@ import {
 } from "@/lib/broadcastFailover";
 import { CaptionsOverlay } from "@/components/audio/CaptionsOverlay";
 import { TranscriptionControls } from "@/components/audio/TranscriptionControls";
+import { usePresenterPing } from "@/hooks/usePresenterPing";
+import { PresenterPingModal } from "@/components/events/PresenterPingModal";
+import { GreenRoomPresenterPingDashboard } from "@/components/events/GreenRoomPresenterPingDashboard";
+import { PresenterState } from "@/lib/presenterPing";
 
 type ConnectionState = BroadcastConnectionState;
 
@@ -39,10 +51,48 @@ export function EventBroadcastFallbackPanel({
   presenterUserId?: string | null;
 }) {
   const [supabase] = useState(() => createClient());
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [session, setSession] = useState<BroadcastSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setCurrentUserId(user?.id || null);
+    });
+  }, [supabase]);
+
+  const initialPresenters: PresenterState[] = useMemo(() => {
+    const list: PresenterState[] = [];
+    const pId = presenterUserId || session?.presenter_user_id;
+    if (pId) {
+      list.push({
+        id: pId,
+        name: "Primary Presenter",
+        connectionState: session?.connection_state || "connected",
+        pingStatus: "idle",
+      });
+    }
+    return list;
+  }, [presenterUserId, session?.presenter_user_id, session?.connection_state]);
+
+  const { presenters, activePing, pingPresenter, pingAllPresenters, confirmReady, resetPresenter } =
+    usePresenterPing({
+      eventId,
+      currentUserId,
+      initialPresenters,
+      isOrganizer,
+      onAwolTriggered: async (awolPresenter) => {
+        if (isOrganizer) {
+          await reportState(
+            "failed",
+            false,
+            `Presenter ${awolPresenter.name} did not confirm readiness within 15 seconds (AWOL).`,
+          );
+        }
+      },
+    });
 
   const loadSession = async () => {
     const { data, error } = await supabase
@@ -394,17 +444,21 @@ export function EventBroadcastFallbackPanel({
             aria-label="Live event broadcast"
           />
           <CaptionsOverlay eventId={eventId} enabled={captionsEnabled} />
-          
+
           <div className="absolute bottom-4 right-16 z-10 opacity-0 transition-opacity group-hover:opacity-100">
             <button
               onClick={() => setCaptionsEnabled((p) => !p)}
               className={`flex items-center gap-2 rounded-lg p-2 text-white shadow-lg backdrop-blur-md transition ${
-                captionsEnabled ? "bg-indigo-600 hover:bg-indigo-700" : "bg-black/60 hover:bg-black/80"
+                captionsEnabled
+                  ? "bg-indigo-600 hover:bg-indigo-700"
+                  : "bg-black/60 hover:bg-black/80"
               }`}
               title="Toggle Captions"
             >
               <Captions className="h-5 w-5" />
-              <span className="text-xs font-bold uppercase">{captionsEnabled ? "CC On" : "CC Off"}</span>
+              <span className="text-xs font-bold uppercase">
+                {captionsEnabled ? "CC On" : "CC Off"}
+              </span>
             </button>
           </div>
         </div>
@@ -430,7 +484,11 @@ export function EventBroadcastFallbackPanel({
               type="button"
               variant="outline"
               onClick={() =>
-                void reportState("disconnected", false, "Presenter reported a lost media connection.")
+                void reportState(
+                  "disconnected",
+                  false,
+                  "Presenter reported a lost media connection.",
+                )
               }
               disabled={isWorking}
               className="neu-border border-white bg-transparent text-white font-mono text-xs font-bold uppercase"
@@ -453,134 +511,21 @@ export function EventBroadcastFallbackPanel({
         </div>
       )}
 
-      {isGreenRoomOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 font-mono">
-          <div className="w-full max-w-lg border-4 border-black bg-white p-6 text-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] rounded-none">
-            <h3 className="font-display text-2xl font-black uppercase tracking-tight text-black border-b-4 border-black pb-2 mb-4">
-              🟢 Pre-Flight Green Room
-            </h3>
-
-            {permissionError ? (
-              <div className="border-4 border-black bg-red-100 p-4 mb-4 text-sm font-bold text-red-700">
-                <p className="uppercase text-red-900 mb-1">⚠️ Permission Required</p>
-                <p className="font-mono text-xs">{permissionError}</p>
-                <button
-                  type="button"
-                  onClick={() => void initGreenRoomStream()}
-                  className="mt-3 bg-red-600 text-white border-2 border-black px-3 py-1.5 text-xs font-bold uppercase hover:bg-red-700"
-                >
-                  Retry Permission Request
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4 text-left">
-                {/* Camera Source Selector */}
-                <div>
-                  <label htmlFor="camera-select" className="block text-xs font-bold uppercase mb-1">
-                    Select Camera Source
-                  </label>
-                  <select
-                    id="camera-select"
-                    value={selectedCameraId}
-                    onChange={(e) => {
-                      setSelectedCameraId(e.target.value);
-                      void initGreenRoomStream(e.target.value);
-                    }}
-                    className="w-full border-2 border-black bg-white px-2 py-1.5 text-xs font-bold font-mono outline-none"
-                  >
-                    {devices.map((device, idx) => (
-                      <option key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Camera ${idx + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Video Preview */}
-                <div className="relative aspect-video border-4 border-black bg-black overflow-hidden">
-                  <video
-                    ref={videoPreviewRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="h-full w-full object-cover scale-x-[-1]"
-                  />
-                  {!localStream && (
-                    <div className="absolute inset-0 flex items-center justify-center text-xs text-neutral-400 font-bold bg-neutral-900">
-                      Connecting camera feed...
-                    </div>
-                  )}
-                </div>
-
-                {/* Video Confirm Gating */}
-                <div className="flex items-center justify-between border-2 border-black bg-neutral-50 p-2.5">
-                  <span className="text-xs font-bold uppercase">Video Feed Status</span>
-                  <button
-                    type="button"
-                    onClick={() => setIsVideoConfirmed((prev) => !prev)}
-                    className={`border-2 border-black px-3 py-1 text-xs font-black uppercase transition-all shadow-[2px_2px_0px_0px_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_#000] ${
-                      isVideoConfirmed ? "bg-emerald-400" : "bg-yellow-300"
-                    }`}
-                  >
-                    {isVideoConfirmed ? "✓ I Look Good" : "Confirm Video Preview"}
-                  </button>
-                </div>
-
-                {/* Audio Check Gating */}
-                <div className="border-2 border-black bg-neutral-50 p-3 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold uppercase">
-                    <span>Audio Level Check</span>
-                    <span className={isAudioPassed ? "text-emerald-600 font-black" : "text-amber-600 font-black"}>
-                      {isAudioPassed ? "✓ Passed" : `Speak loud enough: ${Math.round((speakingTime / 3000) * 100)}%`}
-                    </span>
-                  </div>
-
-                  {/* Volume Meter Progress Bar */}
-                  <div className="h-4 border-2 border-black bg-neutral-200 overflow-hidden relative">
-                    <div
-                      style={{ width: `${audioVolume}%` }}
-                      className={`h-full border-r-2 border-black transition-all duration-75 ${
-                        audioVolume > 20 ? "bg-emerald-400" : "bg-neutral-400"
-                      }`}
-                    />
-                    <div className="absolute inset-y-0 left-[20%] w-0.5 bg-black/35" /> {/* Threshold Line */}
-                  </div>
-
-                  {/* Speak Duration Progress Bar */}
-                  <div className="h-2 border border-black bg-neutral-200 overflow-hidden rounded-sm">
-                    <div
-                      style={{ width: `${(speakingTime / 3000) * 100}%` }}
-                      className="h-full bg-emerald-500 transition-all duration-100"
-                    />
-                  </div>
-                  <p className="text-[10px] text-neutral-500 font-bold uppercase">
-                    Keep speaking above threshold line to fill the meter (3 seconds cumulative).
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex justify-end gap-3 mt-6 border-t-4 border-black pt-4">
-              <button
-                type="button"
-                onClick={closeGreenRoom}
-                className="border-2 border-black bg-neutral-100 hover:bg-neutral-200 px-4 py-2 text-xs font-bold uppercase shadow-[2px_2px_0px_0px_#000] active:translate-x-[1px] active:translate-y-[1px] active:shadow-[1px_1px_0px_0px_#000]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleGoLive()}
-                disabled={!isAudioPassed || !isVideoConfirmed || isWorking}
-                className="border-2 border-black bg-lime text-black disabled:bg-neutral-200 disabled:opacity-50 disabled:shadow-none hover:bg-lime/90 px-5 py-2 text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-[2px_2px_0px_0px_#000]"
-              >
-                {isWorking ? "Updating..." : "Go Live"}
-              </button>
-            </div>
-          </div>
+      {/* Organizer Green Room Presenter Ping Dashboard */}
+      {isOrganizer && (
+        <div className="border-t-2 border-white/30 p-4 bg-gray-900">
+          <GreenRoomPresenterPingDashboard
+            presenters={presenters}
+            onPingPresenter={pingPresenter}
+            onPingAll={pingAllPresenters}
+            onActivateFallback={(reason) => reportState("failed", false, reason)}
+            onResetPresenter={resetPresenter}
+          />
         </div>
       )}
+
+      {/* Presenter Urgent Behavioral Readiness Modal */}
+      <PresenterPingModal ping={activePing} onConfirm={confirmReady} />
     </section>
   );
 }
