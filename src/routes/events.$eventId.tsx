@@ -687,11 +687,39 @@ export default function EventDetailsPage() {
           profiles (full_name, email),
           event_metrics (views)
         `,
-        )
+      )
         .or(`short_id.eq.${eventId},id.eq.${eventId}`)
         .single();
 
       if (error) {
+        // Fallback to check remote_events table for federated events
+        const { data: remoteData, error: remoteError } = await supabase
+          .from("remote_events")
+          .select("*")
+          .eq("id", eventId)
+          .maybeSingle();
+
+        if (!remoteError && remoteData) {
+          return {
+            id: remoteData.id,
+            title: remoteData.title,
+            description: remoteData.description,
+            event_date: remoteData.start_time,
+            start_date: remoteData.start_time,
+            end_date: remoteData.end_time,
+            location: remoteData.location,
+            banner_url: remoteData.banner_url,
+            created_by: null,
+            is_remote: true,
+            host_institution: remoteData.host_institution,
+            origin_server_domain: remoteData.origin_server_domain,
+            origin_event_id: remoteData.origin_event_id,
+            max_attendees: (remoteData.federated_payload as any)?.capacity || null,
+            clubs: { name: `Hosted by ${remoteData.host_institution}` },
+            event_rsvps: [],
+            attendee_count: 0,
+          };
+        }
         // Fallback to mock data in development if db fails or doesn't exist
         if (import.meta.env.DEV && eventId.startsWith("mock-")) {
           return {
@@ -840,6 +868,18 @@ export default function EventDetailsPage() {
     queryKey: ["my_rsvp", eventId, user?.id],
     queryFn: async () => {
       if (!user?.id || eventId.startsWith("mock-")) return null;
+
+      if (event && 'is_remote' in event && event.is_remote) {
+        const { data, error } = await supabase
+          .from("remote_event_rsvps")
+          .select("*")
+          .eq("remote_event_id", eventId)
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (error) return null;
+        return data ? { id: data.id, user_id: user.id } : null;
+      }
+
       const { data, error } = await supabase
         .from("event_rsvps")
         .select("*")
@@ -849,7 +889,7 @@ export default function EventDetailsPage() {
       if (error) throw error;
       return data;
     },
-    enabled: !!user?.id && !!eventId,
+    enabled: !!user?.id && !!eventId && !!event,
   });
 
   // --- ISSUE #4249: OVERDUE ASSET PENALTY CHECK ---
@@ -1082,6 +1122,18 @@ export default function EventDetailsPage() {
     }) => {
       if (!user) throw new Error("Please log in to RSVP");
       if (eventId.startsWith("mock-")) {
+        return;
+      }
+
+      if (event && 'is_remote' in event && event.is_remote) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const { error } = await supabase.functions.invoke("proxy-rsvp", {
+          body: { eventId, hasRsvpd, action: "toggle" },
+          headers: {
+            Authorization: `Bearer ${sessionData.session?.access_token}`,
+          },
+        });
+        if (error) throw error;
         return;
       }
 
@@ -1794,10 +1846,15 @@ export default function EventDetailsPage() {
           )}
 
           <div className="relative mx-auto flex min-h-[50vh] max-w-4xl flex-col justify-end px-4 py-16 md:min-h-[60vh] md:px-6 md:py-24">
-            <div className="mb-4">
+            <div className="mb-4 flex items-center gap-2">
               <span className="neu-border inline-block bg-white px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-wider text-black">
                 Event Details
               </span>
+              {event.is_remote && (
+                <span className="neu-border inline-block bg-blue-100 px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-wider text-blue-800 border-2 border-blue-300">
+                  🌐 External Event
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-3">
@@ -1827,7 +1884,13 @@ export default function EventDetailsPage() {
               </TooltipProvider>
             </div>
 
-            {club && (
+            {event.is_remote ? (
+              <p
+                className={`mt-4 font-mono text-base font-bold ${event.banner_url ? "text-white/90" : "text-black/80"}`}
+              >
+                Hosted by: {event.host_institution}
+              </p>
+            ) : club && (
               <p
                 className={`mt-4 font-mono text-base font-bold ${event.banner_url ? "text-white/90" : "text-black/80"}`}
               >
