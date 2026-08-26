@@ -692,6 +692,10 @@ export type Database = {
           is_banned: boolean;
           strike_count: number;
           show_on_leaderboard: boolean;
+          carpool_driver_rating: number | null;
+          carpool_driver_rating_count: number;
+          is_carpool_driver_blocked: boolean;
+          carpool_driver_blocked_reason: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -717,6 +721,10 @@ export type Database = {
           is_banned?: boolean;
           strike_count?: number;
           show_on_leaderboard?: boolean;
+          carpool_driver_rating?: number | null;
+          carpool_driver_rating_count?: number;
+          is_carpool_driver_blocked?: boolean;
+          carpool_driver_blocked_reason?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -742,6 +750,10 @@ export type Database = {
           is_banned?: boolean;
           strike_count?: number;
           show_on_leaderboard?: boolean;
+          carpool_driver_rating?: number | null;
+          carpool_driver_rating_count?: number;
+          is_carpool_driver_blocked?: boolean;
+          carpool_driver_blocked_reason?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1190,6 +1202,10 @@ export type Database = {
           termination_reason: string | null;
           issued_at: string | null;
           email_sent_at: string | null;
+          is_revoked: boolean;
+          revocation_reason: string | null;
+          revoked_at: string | null;
+          revoked_by: string | null;
           created_at: string;
         };
         Insert: {
@@ -1208,6 +1224,10 @@ export type Database = {
           termination_reason?: string | null;
           issued_at?: string | null;
           email_sent_at?: string | null;
+          is_revoked?: boolean;
+          revocation_reason?: string | null;
+          revoked_at?: string | null;
+          revoked_by?: string | null;
           created_at?: string;
         };
         Update: {
@@ -1226,6 +1246,10 @@ export type Database = {
           termination_reason?: string | null;
           issued_at?: string | null;
           email_sent_at?: string | null;
+          is_revoked?: boolean;
+          revocation_reason?: string | null;
+          revoked_at?: string | null;
+          revoked_by?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -2041,6 +2065,51 @@ export type Database = {
           provider_error?: string | null;
           metadata?: Json;
           created_at?: string;
+        };
+        Relationships: [];
+      };
+      event_presenter_pings: {
+        Row: {
+          id: string;
+          event_id: string;
+          presenter_user_id: string | null;
+          pinged_by: string | null;
+          ping_id: string;
+          status: "pinged" | "confirmed_ready" | "awol";
+          timeout_seconds: number;
+          response_time_ms: number | null;
+          sent_at: string;
+          responded_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id: string;
+          presenter_user_id?: string | null;
+          pinged_by?: string | null;
+          ping_id: string;
+          status?: "pinged" | "confirmed_ready" | "awol";
+          timeout_seconds?: number;
+          response_time_ms?: number | null;
+          sent_at?: string;
+          responded_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string;
+          presenter_user_id?: string | null;
+          pinged_by?: string | null;
+          ping_id?: string;
+          status?: "pinged" | "confirmed_ready" | "awol";
+          timeout_seconds?: number;
+          response_time_ms?: number | null;
+          sent_at?: string;
+          responded_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };
@@ -3348,6 +3417,54 @@ export type Database = {
           },
         ];
       };
+      carpool_driver_ratings: {
+        Row: {
+          id: string;
+          vehicle_id: string;
+          driver_user_id: string;
+          rider_user_id: string;
+          rating: number;
+          feedback: string | null;
+          safety_tags: string[];
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          vehicle_id: string;
+          driver_user_id: string;
+          rider_user_id: string;
+          rating: number;
+          feedback?: string | null;
+          safety_tags?: string[];
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          vehicle_id?: string;
+          driver_user_id?: string;
+          rider_user_id?: string;
+          rating?: number;
+          feedback?: string | null;
+          safety_tags?: string[];
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "carpool_driver_ratings_driver_user_id_fkey";
+            columns: ["driver_user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "carpool_driver_ratings_rider_user_id_fkey";
+            columns: ["rider_user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       venue_maps: {
         Row: {
           id: string;
@@ -3898,6 +4015,8 @@ export type Database = {
           name: string;
           price: number;
           capacity: number | null;
+          capacity_percentage: number | null;
+          is_dynamic_capacity: boolean;
           description: string | null;
           is_early_bird: boolean;
           early_bird_end_date: string | null;
@@ -3914,6 +4033,8 @@ export type Database = {
           name: string;
           price: number;
           capacity?: number | null;
+          capacity_percentage?: number | null;
+          is_dynamic_capacity?: boolean;
           description?: string | null;
           is_early_bird?: boolean;
           early_bird_end_date?: string | null;
@@ -3930,6 +4051,8 @@ export type Database = {
           name?: string;
           price?: number;
           capacity?: number | null;
+          capacity_percentage?: number | null;
+          is_dynamic_capacity?: boolean;
           description?: string | null;
           is_early_bird?: boolean;
           early_bird_end_date?: string | null;
@@ -3993,6 +4116,216 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           notification_sent_at?: string | null;
+        };
+        Relationships: [];
+      };
+      event_geofence_alerts: {
+        Row: {
+          id: string;
+          event_id: string;
+          rsvp_id: string;
+          attendee_id: string;
+          attendee_name: string;
+          status: "escalated" | "acknowledged";
+          breached_at: string;
+          escalated_at: string;
+          responded_at: string | null;
+          distance_meters: number | null;
+          accuracy_meters: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id: string;
+          rsvp_id: string;
+          attendee_id: string;
+          attendee_name: string;
+          status?: "escalated" | "acknowledged";
+          breached_at?: string;
+          escalated_at?: string;
+          responded_at?: string | null;
+          distance_meters?: number | null;
+          accuracy_meters?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string;
+          rsvp_id?: string;
+          attendee_id?: string;
+          attendee_name?: string;
+          status?: "escalated" | "acknowledged";
+          breached_at?: string;
+          escalated_at?: string;
+          responded_at?: string | null;
+          distance_meters?: number | null;
+          accuracy_meters?: number | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      banned_signatures: {
+        Row: {
+          id: string;
+          source_user_id: string;
+          ip_hash: string | null;
+          device_fingerprint_hash: string | null;
+          reason: string;
+          active: boolean;
+          last_seen_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          source_user_id: string;
+          ip_hash?: string | null;
+          device_fingerprint_hash?: string | null;
+          reason: string;
+          active?: boolean;
+          last_seen_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          source_user_id?: string;
+          ip_hash?: string | null;
+          device_fingerprint_hash?: string | null;
+          reason?: string;
+          active?: boolean;
+          last_seen_at?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      verified_certificates: {
+        Row: {
+          id: string;
+          user_id: string;
+          series_id: string;
+          series_name: string;
+          user_name: string;
+          completion_date: string;
+          verification_hash: string;
+          pdf_url: string;
+          issued_at: string;
+          is_revoked: boolean;
+          revocation_reason: string | null;
+          revoked_at: string | null;
+          revoked_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          series_id: string;
+          series_name: string;
+          user_name: string;
+          completion_date: string;
+          verification_hash: string;
+          pdf_url: string;
+          issued_at?: string;
+          is_revoked?: boolean;
+          revocation_reason?: string | null;
+          revoked_at?: string | null;
+          revoked_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          series_id?: string;
+          series_name?: string;
+          user_name?: string;
+          completion_date?: string;
+          verification_hash?: string;
+          pdf_url?: string;
+          issued_at?: string;
+          is_revoked?: boolean;
+          revocation_reason?: string | null;
+          revoked_at?: string | null;
+          revoked_by?: string | null;
+        };
+        Relationships: [];
+      };
+      resource_barter_offers: {
+        Row: {
+          id: string;
+          reservation_id: string;
+          item_id: string;
+          owner_club_id: string;
+          offer_club_id: string;
+          offered_by: string;
+          consideration_type: "points" | "ledger";
+          amount_points: number | null;
+          amount_cents: number | null;
+          status: "pending" | "accepted" | "rejected" | "cancelled" | "expired";
+          responded_by: string | null;
+          responded_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          reservation_id: string;
+          item_id: string;
+          owner_club_id: string;
+          offer_club_id: string;
+          offered_by: string;
+          consideration_type: "points" | "ledger";
+          amount_points?: number | null;
+          amount_cents?: number | null;
+          status?: "pending" | "accepted" | "rejected" | "cancelled" | "expired";
+          responded_by?: string | null;
+          responded_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          reservation_id?: string;
+          item_id?: string;
+          owner_club_id?: string;
+          offer_club_id?: string;
+          offered_by?: string;
+          consideration_type?: "points" | "ledger";
+          amount_points?: number | null;
+          amount_cents?: number | null;
+          status?: "pending" | "accepted" | "rejected" | "cancelled" | "expired";
+          responded_by?: string | null;
+          responded_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      resource_barter_settlements: {
+        Row: {
+          id: string;
+          offer_id: string;
+          from_club_id: string;
+          to_club_id: string;
+          settled_by: string;
+          consideration_type: "points" | "ledger";
+          amount_points: number | null;
+          amount_cents: number | null;
+          settled_at: string;
+        };
+        Insert: {
+          id?: string;
+          offer_id: string;
+          from_club_id: string;
+          to_club_id: string;
+          settled_by: string;
+          consideration_type: "points" | "ledger";
+          amount_points?: number | null;
+          amount_cents?: number | null;
+          settled_at?: string;
+        };
+        Update: {
+          id?: string;
+          offer_id?: string;
+          from_club_id?: string;
+          to_club_id?: string;
+          settled_by?: string;
+          consideration_type?: "points" | "ledger";
+          amount_points?: number | null;
+          amount_cents?: number | null;
+          settled_at?: string;
         };
         Relationships: [];
       };
@@ -4302,6 +4635,95 @@ export type Database = {
       get_club_revenue_forecast: {
         Args: { p_club_id: string; p_event_id: string };
         Returns: Json;
+      };
+      can_revoke_series_certificate: {
+        Args: { p_series_id: string; p_user_id?: string };
+        Returns: boolean;
+      };
+      get_issuer_series_certificates: {
+        Args: { p_series_id?: string | null };
+        Returns: {
+          id: string;
+          series_id: string;
+          series_name: string;
+          user_name: string;
+          completion_date: string;
+          pdf_url: string;
+          issued_at: string;
+          is_revoked: boolean;
+          revocation_reason: string | null;
+          revoked_at: string | null;
+        }[];
+      };
+      revoke_verified_series_certificate: {
+        Args: { p_certificate_id: string; p_reason: string };
+        Returns: Database["public"]["Tables"]["verified_certificates"]["Row"];
+      };
+      can_manage_resource_barter_club: {
+        Args: { p_club_id: string; p_user_id?: string };
+        Returns: boolean;
+      };
+      get_barterable_resource_bookings: {
+        Args: { p_offer_club_id: string };
+        Returns: {
+          reservation_id: string;
+          item_id: string;
+          item_name: string;
+          owner_club_id: string;
+          owner_club_name: string;
+          owner_club_slug: string;
+          start_time: string;
+          end_time: string;
+          current_booking_club_id: string;
+        }[];
+      };
+      get_resource_barter_offers: {
+        Args: { p_club_id: string };
+        Returns: {
+          id: string;
+          reservation_id: string;
+          item_id: string;
+          item_name: string;
+          owner_club_id: string;
+          owner_club_name: string;
+          offer_club_id: string;
+          offer_club_name: string;
+          offered_by: string;
+          consideration_type: "points" | "ledger";
+          amount_points: number | null;
+          amount_cents: number | null;
+          status: "pending" | "accepted" | "rejected" | "cancelled" | "expired";
+          start_time: string;
+          end_time: string;
+          created_at: string;
+          responded_at: string | null;
+        }[];
+      };
+      create_resource_barter_offer: {
+        Args: {
+          p_reservation_id: string;
+          p_offer_club_id: string;
+          p_consideration_type: "points" | "ledger";
+          p_amount_points?: number | null;
+          p_amount_cents?: number | null;
+        };
+        Returns: Database["public"]["Tables"]["resource_barter_offers"]["Row"];
+      };
+      respond_to_resource_barter_offer: {
+        Args: { p_offer_id: string; p_accept: boolean };
+        Returns: Database["public"]["Tables"]["resource_barter_offers"]["Row"];
+      };
+      raise_event_geofence_alert: {
+        Args: {
+          p_rsvp_id: string;
+          p_distance_meters: number;
+          p_accuracy_meters?: number;
+        };
+        Returns: Database["public"]["Tables"]["event_geofence_alerts"]["Row"];
+      };
+      acknowledge_event_geofence_alert: {
+        Args: { p_alert_id: string };
+        Returns: Database["public"]["Tables"]["event_geofence_alerts"]["Row"];
       };
       is_event_organizer: {
         Args: { p_event_id: string; p_user_id?: string };

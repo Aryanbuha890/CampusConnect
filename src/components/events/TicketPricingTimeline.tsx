@@ -10,12 +10,15 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { isFlashSaleRealtimePayload, type ActiveFlashSale } from "@/lib/flashSale";
+import { evaluateEarlyBirdThreshold } from "@/lib/dynamicEarlyBirdThresholds";
 
 interface TicketTier {
   id: string;
   name: string;
   price: number;
   capacity: number | null;
+  capacity_percentage?: number | null;
+  is_dynamic_capacity?: boolean;
   start_date: string | null;
   end_date: string | null;
   sold_count?: number; // fetched separately
@@ -29,6 +32,7 @@ export function TicketPricingTimeline({
   isOrganizer?: boolean;
 }) {
   const [tiers, setTiers] = useState<TicketTier[]>([]);
+  const [venueCapacity, setVenueCapacity] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
   const [preferredCurrency, setPreferredCurrency] = useState<string | null>(null);
@@ -37,6 +41,8 @@ export function TicketPricingTimeline({
   const [dynamicPrice, setDynamicPrice] = useState<number | null>(null);
   const [ticketsUntilIncrease, setTicketsUntilIncrease] = useState<number | null>(null);
   const [flashSale, setFlashSale] = useState<ActiveFlashSale | null>(null);
+  const [isGroupRsvp, setIsGroupRsvp] = useState(false);
+  const [friendEmails, setFriendEmails] = useState<string[]>(["", "", "", ""]);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,12 +98,16 @@ export function TicketPricingTimeline({
     const fetchTiers = async () => {
       setLoading(true);
       try {
-        // Fetch event's dynamic pricing details
+        // Fetch event's dynamic pricing details and venue capacity
         const { data: eventData, error: eventError } = await supabase
           .from("events")
-          .select("base_price, surge_multiplier")
+          .select("base_price, surge_multiplier, venue_capacity, max_attendees")
           .eq("id", eventId)
           .single();
+
+        if (eventData) {
+          setVenueCapacity(eventData.venue_capacity ?? eventData.max_attendees ?? null);
+        }
 
         if (!eventError && eventData && eventData.base_price !== null) {
           setIsDynamic(true);
@@ -123,7 +133,9 @@ export function TicketPricingTimeline({
 
         const { data, error } = await supabase
           .from("ticket_tiers")
-          .select("id, name, price, capacity, start_date, end_date")
+          .select(
+            "id, name, price, capacity, capacity_percentage, is_dynamic_capacity, start_date, end_date",
+          )
           .eq("event_id", eventId)
           .order("start_date", { ascending: true, nullsFirst: false });
 
@@ -165,6 +177,15 @@ export function TicketPricingTimeline({
 
   const handlePurchase = async () => {
     setPurchasing(true);
+    const activeEmails = isGroupRsvp ? friendEmails.filter((e) => e.trim() !== "") : [];
+    if (isGroupRsvp && activeEmails.length !== 4) {
+      toast.error(
+        "Please provide exactly 4 friend emails to receive the Buy 4, Get 1 Free discount!",
+      );
+      setPurchasing(false);
+      return;
+    }
+
     try {
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL || "http://localhost:54321"}/functions/v1/create-stripe-checkout`,
@@ -176,7 +197,8 @@ export function TicketPricingTimeline({
           },
           body: JSON.stringify({
             eventId,
-            quantity: 1,
+            quantity: isGroupRsvp ? 5 : 1,
+            friendEmails: isGroupRsvp ? activeEmails : [],
           }),
         },
       );
@@ -240,15 +262,28 @@ export function TicketPricingTimeline({
         </div>
       )}
 
-      {!isDynamic && activeTier && activeTier.end_date && (
-        <div className="bg-peach/20 border-2 border-black p-3 mb-6 flex items-center gap-3 font-mono text-sm">
-          <Clock className="w-5 h-5 text-red-500 animate-pulse" />
-          <span>
-            🔥 <strong>{activeTier.name}</strong> ends in{" "}
-            {formatDistanceToNow(new Date(activeTier.end_date))}!
-          </span>
+      {!isDynamic && activeTier && (
+        <div className="bg-peach/20 border-2 border-black p-3 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono text-sm">
+          <div className="flex items-center gap-3">
+            <Clock className="w-5 h-5 text-red-500 animate-pulse shrink-0" />
+            <div>
+              <span>
+                🔥 <strong>{activeTier.name}</strong>
+                {activeTier.end_date &&
+                  ` ends in ${formatDistanceToNow(new Date(activeTier.end_date))}!`}
+              </span>
+              {activeTier.capacity_percentage && (
+                <span className="block text-xs text-black/70 mt-0.5">
+                  Allocation: {activeTier.capacity_percentage}% of venue capacity
+                  {activeTier.sold_count !== undefined &&
+                    activeTier.capacity &&
+                    ` (${Math.max(0, activeTier.capacity - activeTier.sold_count)} of ${activeTier.capacity} remaining)`}
+                </span>
+              )}
+            </div>
+          </div>
           {nextTier && (
-            <span className="ml-auto text-black/60 hidden md:inline">
+            <span className="text-black/60 font-bold text-xs whitespace-nowrap">
               Next price: ${(nextTier.price / 100).toFixed(2)} USD
             </span>
           )}
@@ -332,6 +367,60 @@ export function TicketPricingTimeline({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Group RSVP Discount Section */}
+      {(activeTier || isDynamic || flashSale) && (
+        <div className="mt-6 border-t-2 border-black/10 pt-6">
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              type="checkbox"
+              id="group-rsvp-checkbox"
+              checked={isGroupRsvp}
+              onChange={(e) => setIsGroupRsvp(e.target.checked)}
+              className="w-4 h-4 rounded border-2 border-black text-lime focus:ring-0 focus:ring-offset-0 cursor-pointer"
+            />
+            <label
+              htmlFor="group-rsvp-checkbox"
+              className="font-mono text-sm font-bold uppercase tracking-wider cursor-pointer"
+            >
+              👥 Buy for a Group (Buy 4, Get 1 Ticket Free!)
+            </label>
+          </div>
+
+          {isGroupRsvp && (
+            <div className="bg-cream border-2 border-black p-4 rounded-lg flex flex-col gap-3 font-mono text-sm">
+              <p className="text-xs text-black/70 font-semibold uppercase tracking-wide">
+                Enter your 4 friends' emails to invite them. They must be registered platform users.
+              </p>
+              {friendEmails.map((email, idx) => (
+                <div key={idx} className="flex flex-col gap-1">
+                  <label
+                    htmlFor={`friend-email-${idx}`}
+                    className="text-[10px] font-bold uppercase"
+                  >
+                    Friend {idx + 1} Email
+                  </label>
+                  <input
+                    id={`friend-email-${idx}`}
+                    type="email"
+                    placeholder="friend@college.edu"
+                    value={email}
+                    onChange={(e) => {
+                      const updated = [...friendEmails];
+                      updated[idx] = e.target.value;
+                      setFriendEmails(updated);
+                    }}
+                    className="border-2 border-black rounded-md px-3 py-1.5 bg-white text-sm focus:outline-none"
+                  />
+                </div>
+              ))}
+              <div className="bg-lime/20 border border-black/30 p-2 rounded text-xs text-center font-bold">
+                🎉 Buy 4, Get 1 Free coupon discount will be automatically applied at checkout!
+              </div>
+            </div>
+          )}
         </div>
       )}
 
