@@ -28,6 +28,7 @@ import { EventCapacityGauge } from "@/components/events/EventCapacityGauge";
 import { TicketPricingTimeline } from "@/components/events/TicketPricingTimeline";
 import { FlashSaleBanner } from "@/components/events/FlashSaleBanner";
 import { FlashSaleControl } from "@/components/events/FlashSaleControl";
+import { DutchAuctionPanel } from "@/components/events/DutchAuctionPanel";
 import { formatDateLong } from "@/lib/dateFormatter";
 import { getRsvpIdempotencyKey, clearRsvpIdempotencyKey } from "@/lib/rsvpIdempotency";
 import { toast } from "sonner";
@@ -1968,7 +1969,8 @@ export default function EventDetailsPage() {
               />
             </div>
 
-            <div id="ticket-pricing-section" className="mt-6 max-w-2xl">
+            <div id="ticket-pricing-section" className="mt-6 max-w-2xl space-y-4">
+              <DutchAuctionPanel eventId={event.id} />
               <FlashSaleBanner eventId={event.id} />
               <TicketPricingTimeline eventId={event.id} isOrganizer={isOrganizer} />
               {isOrganizer && (
