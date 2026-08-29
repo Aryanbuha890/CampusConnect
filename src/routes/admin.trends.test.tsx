@@ -6,7 +6,9 @@ import TrendsForecastingAdmin from "./admin.trends";
 
 // Mock Recharts components to prevent layout engine exceptions in JSDOM
 vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: any) => <div data-testid="responsive-container">{children}</div>,
+  ResponsiveContainer: ({ children }: any) => (
+    <div data-testid="responsive-container">{children}</div>
+  ),
   AreaChart: ({ children }: any) => <div data-testid="area-chart">{children}</div>,
   Area: () => <div data-testid="chart-area" />,
   XAxis: () => <div />,
@@ -24,11 +26,11 @@ const mockRpc = vi.fn().mockResolvedValue({
       alert_triggered: true,
       underfunded_club_id: "f1234567-89ab-cdef-0123-456789abcdef",
       underfunded_club_name: "Physics Club",
-      underfunded_club_balance: 50.00,
+      underfunded_club_balance: 50.0,
       reallocation_source_club_id: "f9876543-210f-edcb-ba98-76543210fedc",
       reallocation_source_club_name: "Blockchain Club",
-      reallocation_source_club_balance: 5000.00,
-      recommendation: "RISING TREND: #QuantumComputing is up +212%. Consider budget adjustments."
+      reallocation_source_club_balance: 5000.0,
+      recommendation: "RISING TREND: #QuantumComputing is up +212%. Consider budget adjustments.",
     },
     {
       tag: "#Blockchain",
@@ -37,14 +39,14 @@ const mockRpc = vi.fn().mockResolvedValue({
       alert_triggered: false,
       underfunded_club_id: "f9876543-210f-edcb-ba98-76543210fedc",
       underfunded_club_name: "Blockchain Club",
-      underfunded_club_balance: 5000.00,
+      underfunded_club_balance: 5000.0,
       reallocation_source_club_id: "f9876543-210f-edcb-ba98-76543210fedc",
       reallocation_source_club_name: "Blockchain Club",
-      reallocation_source_club_balance: 5000.00,
-      recommendation: "Stable"
-    }
+      reallocation_source_club_balance: 5000.0,
+      recommendation: "Stable",
+    },
   ],
-  error: null
+  error: null,
 });
 
 const mockFrom = vi.fn().mockReturnValue({
@@ -56,12 +58,12 @@ const mockFrom = vi.fn().mockReturnValue({
           { week_start: "2026-08-08", count: 4 },
           { week_start: "2026-08-15", count: 13 },
           { week_start: "2026-08-22", count: 40 },
-          { week_start: "2026-08-29", count: 125 }
+          { week_start: "2026-08-29", count: 125 },
         ],
-        error: null
-      })
-    })
-  })
+        error: null,
+      }),
+    }),
+  }),
 });
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -78,9 +80,9 @@ vi.mock("@/lib/supabase/client", () => ({
         return {
           select: () => ({
             eq: () => ({
-              single: () => Promise.resolve({ data: { role: "system_admin" }, error: null })
-            })
-          })
+              single: () => Promise.resolve({ data: { role: "system_admin" }, error: null }),
+            }),
+          }),
         };
       }
       if (table === "tag_weekly_stats") {
@@ -88,11 +90,11 @@ vi.mock("@/lib/supabase/client", () => ({
       }
       return {
         select: () => ({
-          eq: () => Promise.resolve({ data: [], error: null })
-        })
+          eq: () => Promise.resolve({ data: [], error: null }),
+        }),
       };
-    }
-  })
+    },
+  }),
 }));
 
 describe("TrendsForecastingAdmin Component", () => {
@@ -100,7 +102,7 @@ describe("TrendsForecastingAdmin Component", () => {
     render(
       <BrowserRouter>
         <TrendsForecastingAdmin />
-      </BrowserRouter>
+      </BrowserRouter>,
     );
 
     // Verify title and main elements are rendered
@@ -112,7 +114,9 @@ describe("TrendsForecastingAdmin Component", () => {
 
     // Check alert banner content
     expect(screen.getByText("Active Trend Alerts")).toBeInTheDocument();
-    expect(screen.getByText("RISING TREND: #QuantumComputing is up +212%. Consider budget adjustments.")).toBeInTheDocument();
+    expect(
+      screen.getByText("RISING TREND: #QuantumComputing is up +212%. Consider budget adjustments."),
+    ).toBeInTheDocument();
 
     // Check Recharts rendering container
     expect(screen.getByTestId("responsive-container")).toBeInTheDocument();
@@ -124,7 +128,7 @@ describe("TrendsForecastingAdmin Component", () => {
     render(
       <BrowserRouter>
         <TrendsForecastingAdmin />
-      </BrowserRouter>
+      </BrowserRouter>,
     );
 
     await waitFor(() => {
@@ -145,7 +149,7 @@ describe("TrendsForecastingAdmin Component", () => {
 
     // Verify success toast gets fired
     expect(toastSpy.success).toHaveBeenCalledWith(
-      "Budget proposal submitted! Reallocated $2,000 from Blockchain Club to Physics Club."
+      "Budget proposal submitted! Reallocated $2,000 from Blockchain Club to Physics Club.",
     );
   });
 });
