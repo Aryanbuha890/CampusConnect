@@ -41,6 +41,7 @@ import {
   removeFaq,
   updateFaq,
   DEFAULT_EVENT_TAG_OPTIONS,
+  RESOURCE_OPTIONS,
   type EventFormValues,
 } from "@/lib/eventUtils";
 import { EventLogisticsService } from "@/services/eventLogisticsService";
@@ -105,8 +106,9 @@ interface LocalEventFormValues extends EventFormValues {
   maxAttendees?: number;
   offCampusSpeaker?: boolean;
   requiresApproval?: boolean;
+  requiresSignature?: boolean;
+  ndaTemplateUrl?: string;
 }
-
 const defaultValues: LocalEventFormValues = {
   title: "",
   description: "",
@@ -130,11 +132,12 @@ const defaultValues: LocalEventFormValues = {
   maxAttendees: undefined,
   offCampusSpeaker: false,
   requiresApproval: false,
+  requiresSignature: false,
+  ndaTemplateUrl: undefined,
   isPrivate: false,
   tags: [],
   faqs: [],
 };
-
 const DRAFT_KEY = "event_draft";
 const DRAFT_AUTOSAVE_INTERVAL_MS = 5000;
 
@@ -417,6 +420,28 @@ export function CreateEventDialog({
 
         if (error) {
           throw new Error(error.message);
+        }
+
+        if (createdData?.id && values.resourceNeeds && values.resourceNeeds.length > 0) {
+          try {
+            const { error: resourceError } = await supabase.from("event_resource_requests").insert({
+              event_id: createdData.id,
+              resources: values.resourceNeeds,
+              status: "pending",
+              provider: "zendesk", // Default extensible provider
+            });
+            if (resourceError) {
+              console.warn("Failed to log resource request:", resourceError);
+            } else {
+              supabase.functions
+                .invoke("submit-resource-ticket", {
+                  body: { eventId: createdData.id },
+                })
+                .catch((err) => console.warn("Failed to invoke submit-resource-ticket:", err));
+            }
+          } catch (e) {
+            console.warn("Resource req fail", e);
+          }
         }
 
         if (createdData?.id) {
@@ -1087,10 +1112,69 @@ export function CreateEventDialog({
                   )}
                 />
 
+                <FormField
+                  control={control}
+                  name="requiresSignature"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border-2 border-black bg-white p-4 shadow-sm">
+                      <FormControl>
+                        <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                      <div className="space-y-1 leading-none">
+                        <FormLabel className="font-bold cursor-pointer">
+                          Requires NDA Signature
+                        </FormLabel>
+                        <p className="text-xs text-black/50">
+                          Attendees must digitally sign an NDA before their RSVP is confirmed.
+                          Recommended for talks involving unreleased products or confidential
+                          material.
+                        </p>
+                      </div>
+                    </FormItem>
+                  )}
+                />
+
+                {form.watch("requiresSignature") && (
+                  <FormField
+                    control={control}
+                    name="ndaTemplateUrl"
+                    render={({ field }) => (
+                      <FormItem className="rounded-md border-2 border-black bg-white p-4">
+                        <FormLabel className="font-bold">NDA Template (PDF)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="file"
+                            accept="application/pdf"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const path = `${Date.now()}-${file.name}`;
+                              const { error: uploadError } = await supabase.storage
+                                .from("event_nda_templates")
+                                .upload(path, file);
+                              if (uploadError) {
+                                toast.error("Failed to upload NDA template");
+                                return;
+                              }
+                              const { data: publicUrlData } = supabase.storage
+                                .from("event_nda_templates")
+                                .getPublicUrl(path);
+                              field.onChange(publicUrlData.publicUrl);
+                            }}
+                          />
+                        </FormControl>
+                        <p className="mt-1 text-xs text-black/50">
+                          Attendees will be shown this document to review and sign before RSVP.
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
                 {watchedGeofencingEnabled && (
                   <div className="space-y-3 rounded-md border-2 border-black bg-white p-4">
-                    <GeofenceMapPicker
-                      latitude={watchedLatitude}
+                    <GeofenceMapPicker                      latitude={watchedLatitude}
                       longitude={watchedLongitude}
                       radiusMeters={watchedGeofenceRadius || DEFAULT_GEOFENCE_RADIUS_METERS}
                       onChange={({ latitude, longitude }) => {
@@ -1230,6 +1314,35 @@ export function CreateEventDialog({
                     />
                   </div>
                 </div>
+
+                <FormField
+                  control={control}
+                  name="resourceNeeds"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="font-mono text-xs font-bold uppercase text-black">
+                        Resource Needs (IT & Facilities)
+                      </FormLabel>
+                      <FormControl>
+                        <MultiSelect
+                          value={(field.value || []).map((res: string) => {
+                            const option = RESOURCE_OPTIONS.find((o) => o.value === res);
+                            return { value: res, label: option?.label || res };
+                          })}
+                          onChange={(resources) => field.onChange(resources.map((r) => r.value))}
+                          options={RESOURCE_OPTIONS}
+                          placeholder="Select required resources..."
+                          allowCustom={true}
+                        />
+                      </FormControl>
+                      <p className="mt-1 text-xs text-black/50">
+                        Automatically opens a ticket with the provider (e.g. Zendesk) for requested
+                        items.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </>
             )}
 

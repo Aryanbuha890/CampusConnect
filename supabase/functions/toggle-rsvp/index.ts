@@ -19,6 +19,23 @@ const toggleRsvpSchema = z
   })
   .strict();
 
+function isDisposableEmail(email: string): boolean {
+  const disposableDomains = [
+    "10minutemail.com",
+    "10minutemail.co.za",
+    "10minutemail",
+    "tempmail.com",
+    "tempmail",
+    "mailinator.com",
+    "yopmail.com",
+    "guerrillamail.com",
+    "dispostable.com",
+    "sharklasers.com",
+  ];
+  const domain = email.split("@")[1]?.toLowerCase() || "";
+  return disposableDomains.some((d) => domain.includes(d) || domain === d);
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -264,21 +281,50 @@ serve(async (req: Request) => {
 
       return respond({ success: true, status: "cancelled" }, 200);
     } else {
+      // 1.4 Automated Fraud Detection Pipeline (#4252)
+      let fraudScore = 0;
+      const email = user.email || "";
+      const isDisposable = isDisposableEmail(email);
+      const isNewAccount =
+        user.created_at && Date.now() - new Date(user.created_at).getTime() < 3600 * 1000;
+
+      let ipMatchCount = 0;
+      if (ip && ip !== "unknown") {
+        const { count, error: ipCountError } = await supabase
+          .from("event_rsvps")
+          .select("id", { count: "exact", head: true })
+          .eq("ip_address", ip);
+        if (!ipCountError && count !== null) {
+          ipMatchCount = count;
+        }
+      }
+
+      if (isDisposable) fraudScore += 40;
+      if (isNewAccount) fraudScore += 30;
+      if (ipMatchCount >= 10) fraudScore += 40;
+
+      const isSuspicious = fraudScore >= 60;
+      if (isSuspicious) {
+        // Silently quarantine suspicious RSVPs to shadow-ban bots/trolls
+        const { error: quarantineError } = await supabase.from("event_rsvps").insert({
+          event_id: eventId,
+          user_id: user.id,
+          status: "quarantined",
+          ip_address: ip,
+          no_media_consent: noMediaConsent === true,
+        });
+
+        if (quarantineError && !quarantineError.message.includes("duplicate key")) {
+          throw quarantineError;
+        }
+
+        // Return a success message to the bot to prevent them from adapting
+        return respond({ success: true, status: "attending" }, 200);
+      }
+
       // 1.5 Pre-flight Prerequisite Verification
       const { data: eventData, error: eventErr } = await supabase
         .from("events")
- feature/rsvp-prereq-blocker-3946
- feature/rsvp-prereq-blocker-3946
- feature/rsvp-prereq-blocker-3946
-
- feature/geofenced-checkin-4035
- feature/geofenced-checkin-4035
- main
-
- feature/assistant-persistence-2044
- main
-
-
         .select("prerequisite_event_id, title, has_photography, is_high_demand")
         .eq("id", eventId)
         .single();
@@ -357,8 +403,6 @@ serve(async (req: Request) => {
           );
         }
       }
-
- main
       if (eventData?.has_photography && noMediaConsent == null) {
         return respond(
           { error: "Media consent choice is required for this photography event." },
@@ -377,35 +421,6 @@ serve(async (req: Request) => {
             {
               error: `You must attend the prerequisite event before registering for this event.`,
             },
- feature/rsvp-prereq-blocker-3946
- feature/rsvp-prereq-blocker-3946
- feature/rsvp-prereq-blocker-3946
-
- feature/geofenced-checkin-4035
- feature/geofenced-checkin-4035
- main
-
- feature/assistant-persistence-2044
- main
- HEAD
-
- feature/waitlist-churn-predictor
- feature/waitlist-churn-predictor
-
- feature/club-lifecycle-monitor-3610
- feature/club-lifecycle-monitor-3610
- feature/club-lifecycle-monitor-3610
-
- main
- feature/vendor-contract-nudges
- main
-            403
-
-
- main
- upstream/main
-
- main
             403,
           );
         }
