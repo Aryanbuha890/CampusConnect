@@ -1,5 +1,13 @@
-import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, Radio, RefreshCw, Video, Captions } from "lucide-react";
+import { useEffect, useState, useMemo, useRef } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  Radio,
+  RefreshCw,
+  Video,
+  Captions,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -11,6 +19,11 @@ import {
 } from "@/lib/broadcastFailover";
 import { CaptionsOverlay } from "@/components/audio/CaptionsOverlay";
 import { TranscriptionControls } from "@/components/audio/TranscriptionControls";
+import { HardwareCaptionEncoderPanel } from "@/components/events/HardwareCaptionEncoderPanel";
+import { usePresenterPing } from "@/hooks/usePresenterPing";
+import { PresenterPingModal } from "@/components/events/PresenterPingModal";
+import { GreenRoomPresenterPingDashboard } from "@/components/events/GreenRoomPresenterPingDashboard";
+import { PresenterState } from "@/lib/presenterPing";
 
 type ConnectionState = BroadcastConnectionState;
 
@@ -39,10 +52,48 @@ export function EventBroadcastFallbackPanel({
   presenterUserId?: string | null;
 }) {
   const [supabase] = useState(() => createClient());
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [session, setSession] = useState<BroadcastSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setCurrentUserId(user?.id || null);
+    });
+  }, [supabase]);
+
+  const initialPresenters: PresenterState[] = useMemo(() => {
+    const list: PresenterState[] = [];
+    const pId = presenterUserId || session?.presenter_user_id;
+    if (pId) {
+      list.push({
+        id: pId,
+        name: "Primary Presenter",
+        connectionState: session?.connection_state || "connected",
+        pingStatus: "idle",
+      });
+    }
+    return list;
+  }, [presenterUserId, session?.presenter_user_id, session?.connection_state]);
+
+  const { presenters, activePing, pingPresenter, pingAllPresenters, confirmReady, resetPresenter } =
+    usePresenterPing({
+      eventId,
+      currentUserId,
+      initialPresenters,
+      isOrganizer,
+      onAwolTriggered: async (awolPresenter) => {
+        if (isOrganizer) {
+          await reportState(
+            "failed",
+            false,
+            `Presenter ${awolPresenter.name} did not confirm readiness within 15 seconds (AWOL).`,
+          );
+        }
+      },
+    });
 
   const loadSession = async () => {
     const { data, error } = await supabase
@@ -113,24 +164,183 @@ export function EventBroadcastFallbackPanel({
     await loadSession();
   };
 
-  const runAvCheck = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      toast.error("This browser cannot run a camera and microphone check.");
-      return;
+  // ─── GREEN ROOM DIAGNOSTIC STATE & REFS ─────────────────────────────────────
+  const [isGreenRoomOpen, setIsGreenRoomOpen] = useState(false);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>("");
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [audioVolume, setAudioVolume] = useState<number>(0);
+  const [speakingTime, setSpeakingTime] = useState<number>(0);
+  const [isVideoConfirmed, setIsVideoConfirmed] = useState(false);
+  const [isAudioPassed, setIsAudioPassed] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+
+  const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
+  const startAudioAnalysis = (stream: MediaStream) => {
+    cleanupAudioAnalysis();
+
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      audioContextRef.current = ctx;
+      analyserRef.current = analyser;
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      let lastTime = performance.now();
+
+      const updateMeter = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(dataArray);
+
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          sum += dataArray[i];
+        }
+        const average = sum / bufferLength;
+        const vol = Math.min((average / 128) * 100, 100);
+        setAudioVolume(vol);
+
+        const now = performance.now();
+        const delta = now - lastTime;
+        lastTime = now;
+
+        if (vol > 20) {
+          setSpeakingTime((prev) => {
+            const next = prev + delta;
+            if (next >= 3000) {
+              setIsAudioPassed(true);
+              return 3000;
+            }
+            return next;
+          });
+        }
+
+        animationFrameRef.current = requestAnimationFrame(updateMeter);
+      };
+
+      animationFrameRef.current = requestAnimationFrame(updateMeter);
+    } catch (err) {
+      console.error("Failed to setup audio context:", err);
     }
+  };
+
+  const cleanupAudioAnalysis = () => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      void audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+  };
+
+  const initGreenRoomStream = async (deviceId?: string) => {
+    setPermissionError(null);
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    setLocalStream(null);
+
+    try {
+      const constraints: MediaStreamConstraints = {
+        audio: true,
+        video: deviceId ? { deviceId: { exact: deviceId } } : true,
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      mediaStreamRef.current = stream;
+      setLocalStream(stream);
+
+      if (videoPreviewRef.current) {
+        videoPreviewRef.current.srcObject = stream;
+      }
+
+      startAudioAnalysis(stream);
+
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      const videoIn = allDevices.filter((d) => d.kind === "videoinput");
+      setDevices(videoIn);
+
+      if (!deviceId && videoIn.length > 0) {
+        const currentVideoTrack = stream.getVideoTracks()[0];
+        const currentSettings = currentVideoTrack?.getSettings();
+        if (currentSettings?.deviceId) {
+          setSelectedCameraId(currentSettings.deviceId);
+        } else {
+          setSelectedCameraId(videoIn[0].deviceId);
+        }
+      }
+    } catch (err: any) {
+      console.error("Green Room getUserMedia error:", err);
+      setPermissionError(err.message || "Failed to access camera or microphone.");
+      toast.error("Camera or Microphone access was denied.");
+    }
+  };
+
+  const openGreenRoom = () => {
+    setIsGreenRoomOpen(true);
+    setSpeakingTime(0);
+    setIsAudioPassed(false);
+    setIsVideoConfirmed(false);
+    setAudioVolume(0);
+    void initGreenRoomStream();
+  };
+
+  const closeGreenRoom = () => {
+    setIsGreenRoomOpen(false);
+    cleanupAudioAnalysis();
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    setLocalStream(null);
+  };
+
+  const handleGoLive = async () => {
+    if (!isAudioPassed || !isVideoConfirmed) return;
     setIsWorking(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-      stream.getTracks().forEach((track) => track.stop());
       await reportState("connected", true);
-      toast.success("A/V check passed; primary broadcast can resume.");
+      toast.success("Green Room diagnostic passed! You are now live.");
+      closeGreenRoom();
     } catch {
-      await reportState("failed", false, "Presenter camera or microphone check failed.");
-      toast.error("A/V check failed; the fallback slate remains active.");
+      toast.error("Failed to complete pre-flight check.");
     } finally {
       setIsWorking(false);
     }
   };
+
+  useEffect(() => {
+    if (isGreenRoomOpen && localStream && videoPreviewRef.current) {
+      videoPreviewRef.current.srcObject = localStream;
+    }
+  }, [isGreenRoomOpen, localStream]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanupAudioAnalysis();
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
 
   if (isLoading) {
     return (
@@ -235,17 +445,21 @@ export function EventBroadcastFallbackPanel({
             aria-label="Live event broadcast"
           />
           <CaptionsOverlay eventId={eventId} enabled={captionsEnabled} />
-          
+
           <div className="absolute bottom-4 right-16 z-10 opacity-0 transition-opacity group-hover:opacity-100">
             <button
               onClick={() => setCaptionsEnabled((p) => !p)}
               className={`flex items-center gap-2 rounded-lg p-2 text-white shadow-lg backdrop-blur-md transition ${
-                captionsEnabled ? "bg-indigo-600 hover:bg-indigo-700" : "bg-black/60 hover:bg-black/80"
+                captionsEnabled
+                  ? "bg-indigo-600 hover:bg-indigo-700"
+                  : "bg-black/60 hover:bg-black/80"
               }`}
               title="Toggle Captions"
             >
               <Captions className="h-5 w-5" />
-              <span className="text-xs font-bold uppercase">{captionsEnabled ? "CC On" : "CC Off"}</span>
+              <span className="text-xs font-bold uppercase">
+                {captionsEnabled ? "CC On" : "CC Off"}
+              </span>
             </button>
           </div>
         </div>
@@ -261,7 +475,7 @@ export function EventBroadcastFallbackPanel({
             <Button
               type="button"
               variant="outline"
-              onClick={() => void runAvCheck()}
+              onClick={openGreenRoom}
               disabled={isWorking}
               className="neu-border border-white bg-white text-black font-mono text-xs font-bold uppercase"
             >
@@ -271,7 +485,11 @@ export function EventBroadcastFallbackPanel({
               type="button"
               variant="outline"
               onClick={() =>
-                void reportState("disconnected", false, "Presenter reported a lost media connection.")
+                void reportState(
+                  "disconnected",
+                  false,
+                  "Presenter reported a lost media connection.",
+                )
               }
               disabled={isWorking}
               className="neu-border border-white bg-transparent text-white font-mono text-xs font-bold uppercase"
@@ -288,11 +506,28 @@ export function EventBroadcastFallbackPanel({
               <RefreshCw className="mr-2 h-4 w-4" /> Refresh
             </Button>
           </div>
-          <div className="w-full">
+          <div className="w-full space-y-4">
             <TranscriptionControls eventId={eventId} />
+            <HardwareCaptionEncoderPanel eventId={eventId} />
           </div>
         </div>
       )}
+
+      {/* Organizer Green Room Presenter Ping Dashboard */}
+      {isOrganizer && (
+        <div className="border-t-2 border-white/30 p-4 bg-gray-900">
+          <GreenRoomPresenterPingDashboard
+            presenters={presenters}
+            onPingPresenter={pingPresenter}
+            onPingAll={pingAllPresenters}
+            onActivateFallback={(reason) => reportState("failed", false, reason)}
+            onResetPresenter={resetPresenter}
+          />
+        </div>
+      )}
+
+      {/* Presenter Urgent Behavioral Readiness Modal */}
+      <PresenterPingModal ping={activePing} onConfirm={confirmReady} />
     </section>
   );
 }

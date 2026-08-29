@@ -23,6 +23,8 @@ import { ClubManageSkeleton } from "@/components/DashboardWidgetSkeleton";
 import { RosterExport } from "@/components/RosterExport";
 import { ImageCropUpload } from "@/components/ImageCropUpload";
 import { ClubMembersTable } from "@/components/Clubs/ClubMembersTable";
+import { LeadershipBackgroundCheckModal } from "@/components/Clubs/LeadershipBackgroundCheckModal";
+import { requiresLeadershipBackgroundCheck } from "@/lib/clubLeadershipBackgroundCheck";
 import { ClubSocialLinksEditor } from "@/components/Clubs/ClubSocialLinksEditor";
 import { ClubHierarchyManager } from "@/components/Clubs/ClubHierarchyManager";
 import { ClubColorPicker } from "@/components/Clubs/ClubColorPicker";
@@ -32,6 +34,7 @@ import ClubAnalyticsDashboard from "@/components/clubs/ClubAnalyticsDashboard";
 import PermissionsGrid from "@/components/Clubs/PermissionsGrid";
 import ClubRenewalWizard from "@/components/ClubRenewalWizard"; // <-- NEW IMPORT FOR OUR WIZARD
 import { WidgetConfigEditor } from "@/components/widgets/WidgetConfigEditor";
+import { AdminQuiz } from "@/components/Clubs/AdminQuiz";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -97,6 +100,10 @@ export default function ClubManageRoute() {
   const [promoVideoUrl, setPromoVideoUrl] = useState("");
   const [isConflictDialogOpen, setIsConflictDialogOpen] = useState(false);
   const [serverClub, setServerClub] = useState<Club | null>(null);
+  const [backgroundCheckRequest, setBackgroundCheckRequest] = useState<{
+    memberId: string;
+    roleId: string;
+  } | null>(null);
 
   const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
@@ -219,8 +226,9 @@ export default function ClubManageRoute() {
         .from("clubs")
         .select(
           `
-          id, name, slug, status, description, banner_url, logo_url, visibility, github_repo_url, social_links, social_links_order, promo_video_url, version, widgets_config,
-          club_members (id, role, status, user_id, joined_at, can_edit_events, can_manage_finance, can_remove_members, can_post_news, can_manage_permissions, profiles (full_name, avatar_url, handle)),
+          id, name, slug, status, risk_level, description, banner_url, logo_url, visibility, github_repo_url, social_links, social_links_order, promo_video_url, version, widgets_config,
+          club_roles (id, title, permissions_level),
+          club_members (id, role, role_id, status, user_id, joined_at, can_edit_events, can_manage_finance, can_remove_members, can_post_news, can_manage_permissions, profiles (full_name, avatar_url, handle)),
           events (id, title, event_date, max_attendees, event_rsvps(id))
         `,
         )
@@ -237,7 +245,10 @@ export default function ClubManageRoute() {
             ?.permissions_level
         : legacyRoleToLevel(currentMember?.role);
 
-      if (!currentMember || (currentRoleLevel ?? 0) < 100) {
+      if (
+        !currentMember ||
+        ((currentRoleLevel ?? 0) < 100 && currentMember.role !== "admin_pending")
+      ) {
         throw new Error("Unauthorized");
       }
 
@@ -434,6 +445,20 @@ export default function ClubManageRoute() {
       <SiteShell>
         <div className="p-8 text-center font-mono text-red-500">
           Unauthorized or Club not found.
+        </div>
+      </SiteShell>
+    );
+  }
+
+  const currentMember = club.club_members.find(
+    (m: { user_id: string; role: string }) => m.user_id === user?.id,
+  );
+
+  if (currentMember?.role === "admin_pending") {
+    return (
+      <SiteShell>
+        <div className="bg-cream min-h-screen pt-8 px-4 pb-24">
+          <AdminQuiz clubId={club.id} onPass={() => refetch()} />
         </div>
       </SiteShell>
     );
@@ -812,13 +837,29 @@ export default function ClubManageRoute() {
                       onReject={(memberId) =>
                         updateMemberMutation.mutate({ memberId, updates: { status: "rejected" } })
                       }
-                      onAssignRole={(memberId, roleId) =>
-                        updateMemberMutation.mutate({ memberId, updates: { role_id: roleId } })
-                      }
+                      onAssignRole={(memberId, roleId) => {
+                        if (requiresLeadershipBackgroundCheck(club.risk_level)) {
+                          setBackgroundCheckRequest({ memberId, roleId });
+                        } else {
+                          updateMemberMutation.mutate({ memberId, updates: { role_id: roleId } });
+                        }
+                      }}
                     />
                   </div>
                 );
               })()}
+
+            {backgroundCheckRequest && (
+              <LeadershipBackgroundCheckModal
+                clubId={club.id}
+                memberId={backgroundCheckRequest.memberId}
+                desiredRoleId={backgroundCheckRequest.roleId}
+                onClose={() => {
+                  setBackgroundCheckRequest(null);
+                  refetch();
+                }}
+              />
+            )}
 
             {activeTab === "roles" && (
               <div className="neu-border bg-white p-6 space-y-6">

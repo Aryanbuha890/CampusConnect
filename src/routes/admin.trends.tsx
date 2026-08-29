@@ -10,7 +10,7 @@ import {
   Coins,
   DollarSign,
   Check,
-  ArrowUpRight
+  ArrowUpRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -132,7 +132,7 @@ export default function TrendsForecastingAdmin() {
   const handleExecuteReallocation = () => {
     if (!selectedTrend) return;
     toast.success(
-      `Budget proposal submitted! Reallocated $${reallocateAmount.toLocaleString()} from ${selectedTrend.reallocation_source_club_name} to ${selectedTrend.underfunded_club_name}.`
+      `Budget proposal submitted! Reallocated $${reallocateAmount.toLocaleString()} from ${selectedTrend.reallocation_source_club_name} to ${selectedTrend.underfunded_club_name}.`,
     );
   };
 
@@ -187,11 +187,14 @@ export default function TrendsForecastingAdmin() {
                 {/* Active Alerts */}
                 <div className="neu-border bg-white p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                   <h2 className="font-display text-2xl font-bold uppercase mb-4 flex items-center gap-2">
-                    <AlertTriangle className="h-6 w-6 text-amber-500 animate-bounce" /> Active Trend Alerts
+                    <AlertTriangle className="h-6 w-6 text-amber-500 animate-bounce" /> Active Trend
+                    Alerts
                   </h2>
                   <div className="space-y-4">
                     {trends.filter((t) => t.alert_triggered).length === 0 ? (
-                      <p className="font-mono text-sm text-black/60">No active high-velocity trends detected this week.</p>
+                      <p className="font-mono text-sm text-black/60">
+                        No active high-velocity trends detected this week.
+                      </p>
                     ) : (
                       trends
                         .filter((t) => t.alert_triggered)
@@ -305,9 +308,7 @@ export default function TrendsForecastingAdmin() {
                 {/* 5-Week Trend History Chart */}
                 <div className="neu-border bg-white p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="font-display text-2xl font-bold uppercase">
-                      5-Week Forecast
-                    </h2>
+                    <h2 className="font-display text-2xl font-bold uppercase">5-Week Forecast</h2>
                     <span className="font-mono text-xs bg-purple-100 text-purple-800 font-bold px-2 py-0.5 rounded-full">
                       {selectedTag}
                     </span>
@@ -331,7 +332,12 @@ export default function TrendsForecastingAdmin() {
                             </linearGradient>
                           </defs>
                           <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" />
-                          <XAxis dataKey="week" stroke="#000000" fontSize={11} fontClass="font-mono" />
+                          <XAxis
+                            dataKey="week"
+                            stroke="#000000"
+                            fontSize={11}
+                            fontClass="font-mono"
+                          />
                           <YAxis stroke="#000000" fontSize={11} fontClass="font-mono" />
                           <Tooltip
                             contentStyle={{
@@ -364,7 +370,8 @@ export default function TrendsForecastingAdmin() {
 
                     {/* Proposal description */}
                     <div className="p-3 bg-purple-50 border border-purple-200 text-xs font-mono text-purple-950">
-                      <span className="font-bold">PROPOSAL:</span> Move funding from the declining trend (e.g. Blockchain) to the rising trend (e.g. Quantum Computing).
+                      <span className="font-bold">PROPOSAL:</span> Move funding from the declining
+                      trend (e.g. Blockchain) to the rising trend (e.g. Quantum Computing).
                     </div>
 
                     {/* Interactive diagram card */}
@@ -374,10 +381,12 @@ export default function TrendsForecastingAdmin() {
                           <p className="text-xs text-black/50">SOURCE (Declining)</p>
                           <p className="font-bold">{selectedTrend.reallocation_source_club_name}</p>
                           <p className="text-xs font-bold text-red-600">
-                            Orig Balance: ${selectedTrend.reallocation_source_club_balance.toLocaleString()}
+                            Orig Balance: $
+                            {selectedTrend.reallocation_source_club_balance.toLocaleString()}
                           </p>
                           <p className="text-xs font-bold text-gray-700">
-                            Post Balance: ${(
+                            Post Balance: $
+                            {(
                               selectedTrend.reallocation_source_club_balance - reallocateAmount
                             ).toLocaleString()}
                           </p>
@@ -389,7 +398,9 @@ export default function TrendsForecastingAdmin() {
                       <div className="space-y-2">
                         <div className="flex justify-between items-center text-xs">
                           <span>Transfer Amount:</span>
-                          <span className="font-bold text-purple-600">${reallocateAmount.toLocaleString()}</span>
+                          <span className="font-bold text-purple-600">
+                            ${reallocateAmount.toLocaleString()}
+                          </span>
                         </div>
                         <input
                           type="range"
@@ -410,8 +421,8 @@ export default function TrendsForecastingAdmin() {
                               setReallocateAmount(
                                 Math.min(
                                   Math.floor(selectedTrend.reallocation_source_club_balance),
-                                  Math.max(0, Number(e.target.value))
-                                )
+                                  Math.max(0, Number(e.target.value)),
+                                ),
                               )
                             }
                             className="neu-border w-full px-2 py-1 text-sm font-bold bg-cream"
@@ -428,8 +439,10 @@ export default function TrendsForecastingAdmin() {
                             Orig Balance: ${selectedTrend.underfunded_club_balance.toLocaleString()}
                           </p>
                           <p className="text-xs font-bold text-purple-700">
-                            Post Balance: ${(
-                              Number(selectedTrend.underfunded_club_balance) + Number(reallocateAmount)
+                            Post Balance: $
+                            {(
+                              Number(selectedTrend.underfunded_club_balance) +
+                              Number(reallocateAmount)
                             ).toLocaleString()}
                           </p>
                         </div>

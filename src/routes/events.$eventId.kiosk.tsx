@@ -145,7 +145,7 @@ export default function KioskMode() {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": "Bearer cisco-ise-secret-token",
+              Authorization: "Bearer cisco-ise-secret-token",
             },
             body: JSON.stringify({
               clientMac: cleanMac,
