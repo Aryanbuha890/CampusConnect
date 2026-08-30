@@ -102,6 +102,7 @@ import { ReportAccessibilityIssueDialog } from "@/components/events/ReportAccess
 import { ManageAccessibilityOverridesDialog } from "@/components/events/ManageAccessibilityOverridesDialog";
 import EventFeedbackForm from "@/components/EventFeedbackForm";
 import { EventSeriesCatchUpCard } from "@/components/events/EventSeriesCatchUpCard";
+import { VendingMachineIntegration } from "@/components/events/VendingMachineIntegration";
 import { EventPhotoGallery } from "@/components/EventPhotoGallery";
 import { PredictiveTurnout } from "@/components/events/PredictiveTurnout";
 import {
@@ -2730,6 +2731,15 @@ export default function EventDetailsPage() {
                 materialsUrl={(event as any).materials_url}
                 seriesId={(event as any).series_id}
               />
+
+              {/* Vending Machine Smart Credits */}
+              {user && (
+                <VendingMachineIntegration
+                  eventId={event.id}
+                  userId={user.id}
+                  isOrganizer={isOrganizer}
+                />
+              )}
 
               {/* Event Feedback (Only if ended and user RSVP'd) */}
               {user &&
