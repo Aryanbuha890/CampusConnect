@@ -196,6 +196,9 @@ const EventFeedbackAnalytics = lazy(() => import("./pages/EventFeedbackAnalytics
 const AttendanceAnalyticsDashboard = lazy(
   () => import("@/components/analytics/AttendanceAnalyticsDashboard"),
 );
+const EventRecommendationEngine = lazy(
+  () => import("@/components/recommendations/EventRecommendationEngine"),
+);
 const CampusShuttleTracker = lazy(() => import("./pages/CampusShuttleTracker"));
 const CourseReviews = lazy(() => import("./pages/CourseReviews"));
 const CampusParkingSpotFinder = lazy(() => import("./pages/CampusParkingSpotFinder"));
@@ -640,6 +643,8 @@ const router = createBrowserRouter(
               {/* Attendance Analytics Dashboard */}
               <Route path="/analytics/attendance" element={<AttendanceAnalyticsDashboard />} />
 
+              {/* Event Recommendation Engine */}
+              <Route path="/recommendations" element={<EventRecommendationEngine />} />
               {/* Jury Duty Content Moderation DAO (Issue #5129) */}
               <Route path="/jury/review/:caseId" element={<JuryReviewRoute />} />
 
