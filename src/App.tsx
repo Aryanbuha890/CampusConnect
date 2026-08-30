@@ -193,6 +193,7 @@ const BundleDetailsRoute = lazy(() => import("./pages/BundleDetailsPage"));
 const EquipmentMarketplace = lazy(() => import("./routes/equipment"));
 const MentorshipDashboard = lazy(() => import("./routes/mentorship-dashboard"));
 const EventFeedbackAnalytics = lazy(() => import("./pages/EventFeedbackAnalytics"));
+const CampusActivityHeatmap = lazy(() => import("@/components/heatmap/CampusActivityHeatmap"));
 const AttendanceAnalyticsDashboard = lazy(
   () => import("@/components/analytics/AttendanceAnalyticsDashboard"),
 );
@@ -639,6 +640,9 @@ const router = createBrowserRouter(
 
               {/* Event Feedback Analytics */}
               <Route path="/event-feedback" element={<EventFeedbackAnalytics />} />
+
+              {/* Campus Activity Heatmap */}
+              <Route path="/analytics/heatmap" element={<CampusActivityHeatmap />} />
 
               {/* Attendance Analytics Dashboard */}
               <Route path="/analytics/attendance" element={<AttendanceAnalyticsDashboard />} />
