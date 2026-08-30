@@ -208,7 +208,7 @@ const SponsorCard: React.FC<SponsorCardProps> = ({
       },
       {
         threshold: 1.0, // Strict 100% visibility requirement
-      }
+      },
     );
 
     observer.observe(cardRef.current);

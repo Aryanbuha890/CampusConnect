@@ -13,6 +13,7 @@ import LazyHydrate from "@/components/LazyHydrate";
 import { User } from "@supabase/supabase-js";
 import { useEmailVerification } from "@/hooks/useEmailVerification";
 import { SiteShell } from "@/components/site/SiteShell";
+import { AslAvatarPip } from "@/components/events/AslAvatarPip";
 import { SkeletonEventDetails } from "@/components/events/SkeletonEventDetails";
 import { EventSeatingManager } from "@/components/events/EventSeatingManager";
 import { SilentAuctionSection } from "@/components/events/SilentAuctionSection";
@@ -21,10 +22,12 @@ import { formatEventDateRange, getGoogleCalendarUrl } from "@/lib/utils";
 import { useBannerColor } from "@/hooks/useBannerColor";
 import { MapSkeleton } from "@/components/ui/MapSkeleton";
 import { Helmet } from "react-helmet-async";
+import { LiveScoreboardOverlay } from "@/components/Scoreboard/LiveScoreboardOverlay";
 import { buildOpenGraphTags } from "@/lib/seo/eventMeta";
 const EventMap = lazy(() => import("@/components/EventMap").then((m) => ({ default: m.EventMap })));
 import { AddToCalendarDropdown } from "@/components/events/AddToCalendarDropdown";
 import { EventCapacityGauge } from "@/components/events/EventCapacityGauge";
+import { LiveCapacityMeter } from "@/components/events/LiveCapacityMeter";
 import { TicketPricingTimeline } from "@/components/events/TicketPricingTimeline";
 import { FlashSaleBanner } from "@/components/events/FlashSaleBanner";
 import { FlashSaleControl } from "@/components/events/FlashSaleControl";
@@ -69,6 +72,10 @@ import { EventBroadcastFallbackPanel } from "@/components/events/EventBroadcastF
 import { EventSubmissions } from "@/components/EventSubmissions";
 import { ReportDialog } from "@/components/ReportDialog";
 import { GeofencedCheckInButton } from "@/components/GeofencedCheckInButton";
+import {
+  CampusSafetyGeofenceAlerts,
+  CampusSafetyGeofenceMonitor,
+} from "@/components/events/CampusSafetyGeofenceMonitor";
 import Ticket from "lucide-react/dist/esm/icons/ticket";
 import Send from "lucide-react/dist/esm/icons/send";
 import { useTicketDownload } from "@/hooks/useTicketDownload";
@@ -91,6 +98,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { SeatingCanvas } from "@/components/events/SeatingCanvas";
 import { SponsorManager } from "@/components/events/SponsorManager";
 import { EventGuestList } from "@/components/events/EventGuestList";
+import { SongRequestSection } from "@/components/events/SongRequestSection";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { OptimizedImage } from "@/components/media/OptimizedImage";
@@ -141,6 +149,7 @@ import { Blurhash } from "react-blurhash";
 import { isValidBlurhash, DEFAULT_FALLBACK_BLURHASH } from "@/lib/blurhashUtils";
 import { EventDescriptionTranslation } from "@/components/events/EventDescriptionTranslation";
 import { useDeviceFingerprint } from "@/hooks/useDeviceFingerprint";
+import { WaitlistBiddingLeaderboard } from "@/components/events/WaitlistBiddingLeaderboard";
 
 /**
  * Hero banner for the event detail page.
@@ -289,6 +298,8 @@ function SimilarEvents({
                 alt={evt.title}
                 aspectRatio="video"
                 className="border-2 border-black mb-3"
+                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                responsiveWidths={[300, 600, 1200]}
               />
             ) : (
               <div className="w-full h-32 bg-peach/30 border-2 border-black mb-3 flex items-center justify-center font-mono text-xs font-bold text-black/50">
@@ -678,13 +689,13 @@ export default function EventDetailsPage() {
           clubs (name, slug, logo_url, primary_color, secondary_color),         event_rsvps (id, user_id),
           attendee_count,
           venues (
-            name, building, capacity, accessibility_features
+            name, building, capacity, accessibility_features, latitude, longitude, geofence_radius_meters
           ),
-          id, title, description, event_date, start_date, end_date, location, banner_url, created_by, is_high_risk, is_high_demand, status, short_id, max_attendees, requires_approval, category_id, tags, version, version_vector, blurhash, latitude, longitude, geofencing_enabled, geofence_radius_meters, accommodation_deadline, dress_code, base_price, surge_multiplier,
+          id, title, description, event_date, start_date, end_date, location, banner_url, created_by, is_high_risk, is_high_demand, status, short_id, max_attendees, requires_approval, category_id, tags, version, version_vector, blurhash, latitude, longitude, geofencing_enabled, geofence_radius_meters, accommodation_deadline, dress_code, base_price, surge_multiplier, is_bidding_enabled,
           profiles (full_name, email),
           event_metrics (views)
         `,
-      )
+        )
         .or(`short_id.eq.${eventId},id.eq.${eventId}`)
         .single();
 
@@ -799,7 +810,9 @@ export default function EventDetailsPage() {
 
       const { data: nodesData, error: nodesError } = await supabase
         .from("map_nodes")
-        .select("id, entity_name, type, x_coord, y_coord, width, height, rotation")
+        .select(
+          "id, entity_name, type, x_coord, y_coord, width, height, rotation, required_ticket_tier_id",
+        )
         .eq("map_id", mapData.id);
 
       if (nodesError) throw nodesError;
@@ -815,6 +828,7 @@ export default function EventDetailsPage() {
           width: Number(node.width),
           height: Number(node.height),
           rotation: node.rotation,
+          required_ticket_tier_id: node.required_ticket_tier_id,
         })),
       };
     },
@@ -866,7 +880,7 @@ export default function EventDetailsPage() {
     queryFn: async () => {
       if (!user?.id || eventId.startsWith("mock-")) return null;
 
-      if (event && 'is_remote' in event && event.is_remote) {
+      if (event && "is_remote" in event && event.is_remote) {
         const { data, error } = await supabase
           .from("remote_event_rsvps")
           .select("*")
@@ -887,21 +901,6 @@ export default function EventDetailsPage() {
       return data;
     },
     enabled: !!user?.id && !!eventId && !!event,
-  });
-
-  const { data: guestWifi } = useQuery({
-    queryKey: ["guest_wifi_credentials", myRsvp?.id],
-    queryFn: async () => {
-      if (!myRsvp?.id) return null;
-      const { data, error } = await supabase
-        .from("guest_network_credentials")
-        .select("*")
-        .eq("rsvp_id", myRsvp.id)
-        .maybeSingle();
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!myRsvp?.id && !!myRsvp?.checked_in,
   });
 
   // --- ISSUE #4249: OVERDUE ASSET PENALTY CHECK ---
@@ -1137,7 +1136,7 @@ export default function EventDetailsPage() {
         return;
       }
 
-      if (event && 'is_remote' in event && event.is_remote) {
+      if (event && "is_remote" in event && event.is_remote) {
         const { data: sessionData } = await supabase.auth.getSession();
         const { error } = await supabase.functions.invoke("proxy-rsvp", {
           body: { eventId, hasRsvpd, action: "toggle" },
@@ -1709,7 +1708,9 @@ export default function EventDetailsPage() {
 
     // --- ISSUE #4249: BLOCK RSVP IF ASSET OVERDUE ---
     if (hasOverdueAssets) {
-      toast.error("Action Blocked: Please return your overdue photography equipment to RSVP for events.");
+      toast.error(
+        "Action Blocked: Please return your overdue photography equipment to RSVP for events.",
+      );
       return;
     }
     // ------------------------------------------------
@@ -1902,15 +1903,27 @@ export default function EventDetailsPage() {
               >
                 Hosted by: {event.host_institution}
               </p>
-            ) : club && (
-              <p
-                className={`mt-4 font-mono text-base font-bold ${event.banner_url ? "text-white/90" : "text-black/80"}`}
-              >
-                Organized by:{" "}
-                <Link to={`/clubs/${club.slug}`} className="underline hover:opacity-80">
-                  {club.name}
-                </Link>
-              </p>
+            ) : (
+              club && (
+                <p
+                  className={`mt-4 font-mono text-base font-bold ${event.banner_url ? "text-white/90" : "text-black/80"}`}
+                >
+                  Organized by:{" "}
+                  <Link to={`/clubs/${club.slug}`} className="underline hover:opacity-80">
+                    {club.name}
+                  </Link>
+                </p>
+              )
+            )}
+
+            {/* Live Scoreboard */}
+            {(event as any).score_data && (
+              <div className="mt-8 z-10 relative">
+                <LiveScoreboardOverlay
+                  eventId={event.id}
+                  initialScoreData={(event as any).score_data}
+                />
+              </div>
             )}
 
             {!club && event.profiles && (
@@ -1974,8 +1987,9 @@ export default function EventDetailsPage() {
               <FlashSaleBanner eventId={event.id} />
               <TicketPricingTimeline eventId={event.id} isOrganizer={isOrganizer} />
               {isOrganizer && (
-                <div className="mt-4">
+                <div className="mt-4 space-y-4">
                   <FlashSaleControl eventId={event.id} />
+                  <FlashSaleTriggerRules eventId={event.id} />
                 </div>
               )}
             </div>
@@ -1988,6 +2002,36 @@ export default function EventDetailsPage() {
                   onCheckedIn={() => refetch()}
                 />
               </div>
+            )}
+
+            {user && hasRsvpd && myRsvpId && !isOrganizer && !hasEnded && (
+              <CampusSafetyGeofenceMonitor
+                rsvpId={myRsvpId}
+                eventStart={(event as Record<string, unknown>).start_date as string | null}
+                eventEnd={(event as Record<string, unknown>).end_date as string | null}
+                geofencingEnabled={Boolean((event as Record<string, unknown>).geofencing_enabled)}
+                latitude={
+                  ((event as Record<string, unknown>).latitude as number | null) ??
+                  (((event as Record<string, unknown>).venues as Record<string, unknown> | null)
+                    ?.latitude as number | null)
+                }
+                longitude={
+                  ((event as Record<string, unknown>).longitude as number | null) ??
+                  (((event as Record<string, unknown>).venues as Record<string, unknown> | null)
+                    ?.longitude as number | null)
+                }
+                radiusMeters={
+                  ((event as Record<string, unknown>).geofence_radius_meters as
+                    number | undefined) ??
+                  (((event as Record<string, unknown>).venues as Record<string, unknown> | null)
+                    ?.geofence_radius_meters as number | undefined) ??
+                  500
+                }
+              />
+            )}
+
+            {isOrganizer && Boolean((event as Record<string, unknown>).geofencing_enabled) && (
+              <CampusSafetyGeofenceAlerts eventId={event.id} eventTitle={event.title} />
             )}
 
             <div className="mt-8 hidden items-center gap-4 md:flex">
@@ -2019,7 +2063,9 @@ export default function EventDetailsPage() {
 
                       // --- ISSUE #4249: BLOCK WAITLIST IF ASSET OVERDUE ---
                       if (hasOverdueAssets) {
-                        toast.error("Action Blocked: Please return your overdue photography equipment to join waitlists.");
+                        toast.error(
+                          "Action Blocked: Please return your overdue photography equipment to join waitlists.",
+                        );
                         return;
                       }
                       // ----------------------------------------------------
@@ -2037,87 +2083,98 @@ export default function EventDetailsPage() {
                         : "Join Waitlist"}
                   </Button>
                   {isOnWaitlist && (
-                    <div className="mt-4 flex flex-col items-center gap-2 rounded bg-amber-50 p-4 border-2 border-amber-300">
-                      <p className="font-mono text-sm font-bold text-amber-900">
-                        Priority Score: {waitlistScore?.total_score || "..."}
-                      </p>
-                      <p className="text-center text-xs text-amber-800/80 max-w-xs leading-relaxed">
-                        Your position is determined by:
-                        <br />
-                        • Time on waitlist
-                        <br />
-                        • Club membership
-                        <br />
-                        • Attendance streak
-                        <br />• Graduation status
-                      </p>
+                    <>
+                      <div className="mt-4 flex flex-col items-center gap-2 rounded bg-amber-50 p-4 border-2 border-amber-300">
+                        <p className="font-mono text-sm font-bold text-amber-900">
+                          Priority Score: {waitlistScore?.total_score || "..."}
+                        </p>
+                        <p className="text-center text-xs text-amber-800/80 max-w-xs leading-relaxed">
+                          Your position is determined by:
+                          <br />
+                          • Time on waitlist
+                          <br />
+                          • Club membership
+                          <br />
+                          • Attendance streak
+                          <br />• Graduation status
+                        </p>
 
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="mt-2 text-xs border-amber-400 text-amber-900 hover:bg-amber-100 font-bold tracking-tight"
-                          >
-                            View Score Breakdown
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent className="sm:max-w-md border-4 border-black shadow-[8px_8px_0_0_#000]">
-                          <DialogHeader>
-                            <DialogTitle className="font-display uppercase text-2xl tracking-tight text-black">
-                              Priority Score Breakdown
-                            </DialogTitle>
-                            <DialogDescription className="font-mono text-gray-600">
-                              How your waitlist priority is calculated.
-                            </DialogDescription>
-                          </DialogHeader>
-                          {waitlistScore ? (
-                            <div className="flex flex-col gap-3 font-mono text-sm my-4 text-black">
-                              <div className="flex justify-between items-center border-b-2 border-dashed border-gray-300 pb-2">
-                                <span>Time on waitlist ({waitlistScore.waitlist_hours}h)</span>
-                                <span className="font-bold text-blue-600">
-                                  +{waitlistScore.time_score}
-                                </span>
-                              </div>
-                              <div className="flex justify-between items-center border-b-2 border-dashed border-gray-300 pb-2">
-                                <span>Active club member</span>
-                                <span className="font-bold text-lime-600">
-                                  +{waitlistScore.membership_score}
-                                </span>
-                              </div>
-                              <div className="flex justify-between items-center border-b-2 border-dashed border-gray-300 pb-2">
-                                <span>Attendance streak</span>
-                                <span className="font-bold text-orange-600">
-                                  +{waitlistScore.streak_score}
-                                </span>
-                              </div>
-                              <div className="flex justify-between items-center border-b-2 border-black pb-2">
-                                <span>Graduating senior</span>
-                                <span className="font-bold text-purple-600">
-                                  +{waitlistScore.senior_score}
-                                </span>
-                              </div>
-                              <div className="flex justify-between items-center pt-2 text-lg font-black uppercase">
-                                <span>Total Score</span>
-                                <span>{waitlistScore.total_score}</span>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="p-4 text-center font-mono text-gray-500">
-                              Loading score...
-                            </div>
-                          )}
-                          <DialogFooter className="sm:justify-start">
+                        <Dialog>
+                          <DialogTrigger asChild>
                             <Button
                               variant="outline"
-                              className="w-full font-bold uppercase border-2 border-black shadow-[4px_4px_0_0_#000]"
+                              size="sm"
+                              className="mt-2 text-xs border-amber-400 text-amber-900 hover:bg-amber-100 font-bold tracking-tight"
                             >
-                              Close
+                              View Score Breakdown
                             </Button>
-                          </DialogFooter>
-                        </DialogContent>
-                      </Dialog>
-                    </div>
+                          </DialogTrigger>
+                          <DialogContent className="sm:max-w-md border-4 border-black shadow-[8px_8px_0_0_#000]">
+                            <DialogHeader>
+                              <DialogTitle className="font-display uppercase text-2xl tracking-tight text-black">
+                                Priority Score Breakdown
+                              </DialogTitle>
+                              <DialogDescription className="font-mono text-gray-600">
+                                How your waitlist priority is calculated.
+                              </DialogDescription>
+                            </DialogHeader>
+                            {waitlistScore ? (
+                              <div className="flex flex-col gap-3 font-mono text-sm my-4 text-black">
+                                <div className="flex justify-between items-center border-b-2 border-dashed border-gray-300 pb-2">
+                                  <span>Time on waitlist ({waitlistScore.waitlist_hours}h)</span>
+                                  <span className="font-bold text-blue-600">
+                                    +{waitlistScore.time_score}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center border-b-2 border-dashed border-gray-300 pb-2">
+                                  <span>Active club member</span>
+                                  <span className="font-bold text-lime-600">
+                                    +{waitlistScore.membership_score}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center border-b-2 border-dashed border-gray-300 pb-2">
+                                  <span>Attendance streak</span>
+                                  <span className="font-bold text-orange-600">
+                                    +{waitlistScore.streak_score}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center border-b-2 border-black pb-2">
+                                  <span>Graduating senior</span>
+                                  <span className="font-bold text-purple-600">
+                                    +{waitlistScore.senior_score}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center pt-2 text-lg font-black uppercase">
+                                  <span>Total Score</span>
+                                  <span>{waitlistScore.total_score}</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="p-4 text-center font-mono text-gray-500">
+                                Loading score...
+                              </div>
+                            )}
+                            <DialogFooter className="sm:justify-start">
+                              <Button
+                                variant="outline"
+                                className="w-full font-bold uppercase border-2 border-black shadow-[4px_4px_0_0_#000]"
+                              >
+                                Close
+                              </Button>
+                            </DialogFooter>
+                          </DialogContent>
+                        </Dialog>
+                      </div>
+                      {/* Issue #4257: Waitlist Bidding Leaderboard */}
+                      {(event as any)?.is_bidding_enabled && (
+                        <div className="mt-4 w-full">
+                          <WaitlistBiddingLeaderboard
+                            eventId={eventId}
+                            userRsvpId={myRsvp?.status === "waitlisted" ? myRsvp.id : null}
+                          />
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               ) : hasTiersOrSurge ? null : (
@@ -2144,67 +2201,6 @@ export default function EventDetailsPage() {
         {/* Details Container */}
         <section className="bg-cream px-4 py-12 md:px-6">
           <div className="mx-auto max-w-4xl neu-border bg-white p-6 md:p-8">
-            {/* Wi-Fi provision card */}
-            {guestWifi && (
-              <div className="mb-8 p-6 bg-indigo-50 border-4 border-black shadow-[4px_4px_0_0_#000] font-mono text-black rounded-none">
-                <div className="flex items-center gap-3 mb-4 border-b-2 border-black pb-3">
-                  <span className="text-2xl">📶</span>
-                  <div>
-                    <h3 className="font-display font-black text-lg uppercase tracking-tight text-indigo-900">
-                      Multi-Campus Guest Wi-Fi Provisioned
-                    </h3>
-                    <p className="text-xs text-indigo-950/70 font-semibold uppercase tracking-wider">
-                      Welcome to {guestWifi.essid.split("-")[0]}!
-                    </p>
-                  </div>
-                </div>
-                <p className="text-xs font-bold leading-relaxed mb-4 text-indigo-955">
-                  You have been auto-provisioned secure guest network credentials. Valid for 12 hours from check-in.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-                  <div className="bg-white border-2 border-black p-3 shadow-[2px_2px_0_0_#000]">
-                    <p className="text-[10px] text-gray-500 font-bold uppercase">SSID (Network)</p>
-                    <p className="font-bold text-sm text-indigo-900">{guestWifi.essid}</p>
-                  </div>
-                  <div className="bg-white border-2 border-black p-3 shadow-[2px_2px_0_0_#000] flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] text-gray-500 font-bold uppercase">Username</p>
-                      <p className="font-bold text-sm text-green-800">{guestWifi.username}</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(guestWifi.username);
-                        toast.success("Username copied!");
-                      }}
-                      className="text-xs hover:opacity-75 underline font-bold uppercase text-indigo-900"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                  <div className="bg-white border-2 border-black p-3 shadow-[2px_2px_0_0_#000] flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] text-gray-500 font-bold uppercase">Password</p>
-                      <p className="font-bold text-sm text-red-800">{guestWifi.password}</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(guestWifi.password);
-                        toast.success("Password copied!");
-                      }}
-                      className="text-xs hover:opacity-75 underline font-bold uppercase text-indigo-900"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                </div>
-                <div className="text-[9px] text-gray-500 font-bold uppercase border-t border-black/10 pt-3 text-center flex items-center justify-center gap-1.5">
-                  <span>🔒 SECURE RADIUS PROVISIONING</span>
-                  <span>•</span>
-                  <span>EXPIRES: {new Date(guestWifi.expires_at).toLocaleString()}</span>
-                </div>
-              </div>
-            )}
-
             {/* Action buttons (Copy Link / Add to Calendar) */}
             <div className="flex flex-wrap items-center gap-4 border-b-2 border-black pb-8">
               <TooltipProvider>
@@ -2496,6 +2492,11 @@ export default function EventDetailsPage() {
               <LiveQA eventId={eventId} userId={user?.id} isOrganizer={isOrganizer} />
             </div>
 
+            {/* Collaborative Event Soundtrack */}
+            <div className="mt-8">
+              <SongRequestSection eventId={eventId} isOrganizer={isOrganizer} />
+            </div>
+
             {/* Transportation / Carpool Matching (Issue #2877) */}
             <div className="mt-8">
               <CarpoolMatchingSection eventId={eventId} user={user} />
@@ -2572,6 +2573,17 @@ export default function EventDetailsPage() {
                 <AttendeeVenueMap
                   nodes={venueMapData.nodes}
                   backgroundImageUrl={venueMapData.map?.background_image_url}
+                  userTicketTierId={myRsvp?.ticket_tier_id}
+                  assignedSeatNodeId={myRsvp?.assigned_map_node_id}
+                  onSeatSelected={async (nodeId) => {
+                    if (myRsvpId) {
+                      const { error } = await supabase
+                        .from("event_rsvps")
+                        .update({ assigned_map_node_id: nodeId })
+                        .eq("id", myRsvpId);
+                      if (!error) refetchMyRsvp();
+                    }
+                  }}
                   venueId={event.venue_id}
                   eventId={event.id}
                 />
@@ -2684,1003 +2696,1019 @@ export default function EventDetailsPage() {
                           locationName={event.location}
                         />
                       </Suspense>
-                    </>
-                  ) : coordsCheck.isCoordinates && !coordsCheck.isValid ? (
-                    <div className="neu-border mt-4 flex items-start gap-4 bg-peach/20 p-5">
-                      <div className="shrink-0 rounded-none border-2 border-black bg-white p-2 text-destructive">
-                        <MapPinOff className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h3 className="mb-1 font-display text-lg font-bold text-black">
-                          Unable to load map preview
-                        </h3>
-                        <p className="mb-3 font-mono text-xs leading-relaxed text-gray-700">
-                          The coordinates provided (<code>{event.location}</code>) are invalid.
-                          Latitude must be between -90 and 90, and Longitude between -180 and 180.
-                        </p>
-                        <a
-                          href={buildGoogleMapsSearchUrl(event.location)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 font-mono text-xs font-bold underline hover:no-underline text-black"
-                        >
-                          Search location on Google Maps anyway ↗
-                        </a>
-                      </div>
-                    </div>
-                  ) : (
+                    </LazyHydrate>
                     <a
                       href={buildGoogleMapsSearchUrl(event.location)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="neu-border mt-4 inline-flex items-center gap-2 bg-white px-5 py-3 font-mono text-sm font-bold uppercase tracking-wider transition-all duration-300 hover:scale-105 active:scale-95"
+                      className="mt-2 inline-block font-mono text-xs font-bold underline text-blue-500"
                     >
-                      <MapPin className="h-4 w-4" />
-                      Open &quot;{event.location}&quot; in Google Maps ↗
+                      Open in Google Maps ↗
                     </a>
-                  )}
+                  </>
+                ) : coordsCheck.isCoordinates && !coordsCheck.isValid ? (
+                  <div className="neu-border mt-4 flex items-start gap-4 bg-peach/20 p-5">
+                    <div className="shrink-0 rounded-none border-2 border-black bg-white p-2 text-destructive">
+                      <MapPinOff className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="mb-1 font-display text-lg font-bold text-black">
+                        Unable to load map preview
+                      </h3>
+                      <p className="mb-3 font-mono text-xs leading-relaxed text-gray-700">
+                        The coordinates provided (<code>{event.location}</code>) are invalid.
+                        Latitude must be between -90 and 90, and Longitude between -180 and 180.
+                      </p>
+                      <a
+                        href={buildGoogleMapsSearchUrl(event.location)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-mono text-xs font-bold underline hover:no-underline text-black"
+                      >
+                        Search location on Google Maps anyway ↗
+                      </a>
+                    </div>
+                  </div>
+                ) : (
+                  <a
+                    href={buildGoogleMapsSearchUrl(event.location)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="neu-border mt-4 inline-flex items-center gap-2 bg-white px-5 py-3 font-mono text-sm font-bold uppercase tracking-wider transition-all duration-300 hover:scale-105 active:scale-95"
+                  >
+                    <MapPin className="h-4 w-4" />
+                    Open &quot;{event.location}&quot; in Google Maps ↗
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* Event Series Catch-Up Hub */}
+            <EventSeriesCatchUpCard
+              eventId={event.id}
+              eventTitle={event.title}
+              recordingUrl={(event as any).recording_url}
+              materialsUrl={(event as any).materials_url}
+              seriesId={(event as any).series_id}
+            />
+
+            {/* Event Feedback (Only if ended and user RSVP'd) */}
+            {user &&
+              hasRsvpd &&
+              event.end_date &&
+              new Date(event.end_date).getTime() < Date.now() && (
+                <div className="mt-10">
+                  <EventFeedbackForm eventId={event.id} user={user} />
                 </div>
               )}
 
-              {/* Event Series Catch-Up Hub */}
-              <EventSeriesCatchUpCard
-                eventId={event.id}
-                eventTitle={event.title}
-                recordingUrl={(event as any).recording_url}
-                materialsUrl={(event as any).materials_url}
-                seriesId={(event as any).series_id}
-              />
-
-              {/* Event Feedback (Only if ended and user RSVP'd) */}
-              {user &&
-                hasRsvpd &&
-                event.end_date &&
-                new Date(event.end_date).getTime() < Date.now() && (
-                  <div className="mt-10">
-                    <EventFeedbackForm eventId={event.id} user={user} />
+            {/* Event Gallery */}
+            <div className="mt-8 border-t-2 border-black pt-8">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="font-display text-xl font-bold uppercase tracking-tight text-blue-900">
+                    Event Gallery
+                  </h2>
+                  <p className="font-mono text-xs text-black/60 mt-1">
+                    Photos shared from this event
+                  </p>
+                </div>
+                {isOrganizer && (
+                  <div>
+                    <input
+                      type="file"
+                      id="bulk-gallery-upload"
+                      multiple
+                      accept="image/*"
+                      onChange={handlePhotoUpload}
+                      className="hidden"
+                    />
+                    <Button
+                      onClick={() => document.getElementById("bulk-gallery-upload")?.click()}
+                      variant="outline"
+                      className="neu-border neu-press h-12 bg-lime text-black px-5 font-mono text-sm font-bold uppercase tracking-wider transition-all duration-300 hover:scale-105 active:scale-95"
+                    >
+                      📸 Upload Photos
+                    </Button>
                   </div>
                 )}
+              </div>
 
-              {/* Event Gallery */}
-              <div className="mt-8 border-t-2 border-black pt-8">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-                  <div>
+              {/* Accessibility Features */}
+              {(event.venues?.accessibility_features || event.accessibility_features) && (
+                <div className="mt-8">
+                  <div className="flex items-center justify-between border-b-2 border-black pb-2 mb-4">
                     <h2 className="font-display text-xl font-bold uppercase tracking-tight text-blue-900">
-                      Event Gallery
+                      Accessibility
                     </h2>
-                    <p className="font-mono text-xs text-black/60 mt-1">
-                      Photos shared from this event
-                    </p>
-                  </div>
-                  {isOrganizer && (
-                    <div>
-                      <input
-                        type="file"
-                        id="bulk-gallery-upload"
-                        multiple
-                        accept="image/*"
-                        onChange={handlePhotoUpload}
-                        className="hidden"
+                    <div className="flex items-center gap-2">
+                      <ReportAccessibilityIssueDialog
+                        eventId={event.id}
+                        venueId={event.venue_id}
+                        user={user}
                       />
-                      <Button
-                        onClick={() => document.getElementById("bulk-gallery-upload")?.click()}
-                        variant="outline"
-                        className="neu-border neu-press h-12 bg-lime text-black px-5 font-mono text-sm font-bold uppercase tracking-wider transition-all duration-300 hover:scale-105 active:scale-95"
-                      >
-                        📸 Upload Photos
-                      </Button>
+                      {isOrganizer && event.venue_id && (
+                        <ManageAccessibilityOverridesDialog venueId={event.venue_id} user={user} />
+                      )}
                     </div>
-                  )}
+                  </div>
+                  <AccessibilityBadges
+                    features={event.venues?.accessibility_features || event.accessibility_features}
+                    overrides={overrides || []}
+                  />
                 </div>
-
-                {/* Accessibility Features */}
-                {(event.venues?.accessibility_features || event.accessibility_features) && (
-                  <div className="mt-8">
-                    <div className="flex items-center justify-between border-b-2 border-black pb-2 mb-4">
-                      <h2 className="font-display text-xl font-bold uppercase tracking-tight text-blue-900">
-                        Accessibility
-                      </h2>
-                      <div className="flex items-center gap-2">
-                        <ReportAccessibilityIssueDialog
-                          eventId={event.id}
-                          venueId={event.venue_id}
-                          user={user}
+              )}
+              {event.is_high_risk && (
+                <div className="mt-8 border-2 border-black bg-yellow-50 p-6 font-mono text-sm">
+                  <h2 className="text-xl font-bold uppercase tracking-tight text-black mb-3">
+                    Co-Signer Approvals
+                  </h2>
+                  <p className="text-xs text-gray-700 mb-4">
+                    This is a high-risk event. It will be published once all required stakeholders
+                    sign off.
+                  </p>
+                  <div className="space-y-3">
+                    {signatures.map((sig) => (
+                      <div
+                        key={sig.id}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-black/20 pb-2"
+                      >
+                        <div>
+                          <span className="font-bold text-black">{sig.signer_role}</span>:{" "}
+                          {sig.signer_name} ({sig.signer_email})
+                        </div>
+                        <div className="mt-1 sm:mt-0 flex items-center gap-3">
+                          {sig.signed_at ? (
+                            <span className="bg-green-100 text-green-800 border border-green-800 px-2 py-0.5 font-bold uppercase text-xs">
+                              Signed ✓
+                            </span>
+                          ) : (
+                            <>
+                              <span className="bg-red-100 text-red-800 border border-red-800 px-2 py-0.5 font-bold uppercase text-xs">
+                                Pending
+                              </span>
+                              <a
+                                href={`${getSupabaseUrl()}/functions/v1/co-signer-approval?token=${sig.signature_token}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bg-white hover:bg-cream border border-black px-2 py-0.5 text-xs font-bold uppercase underline"
+                              >
+                                Approval Link ↗
+                              </a>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Optimistic UI & Progress for Uploading Files */}
+              {uploadingFiles.length > 0 && (
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 mb-6">
+                  {uploadingFiles.map((file) => (
+                    <div
+                      key={file.id}
+                      className="relative neu-border bg-white p-2 flex flex-col justify-between"
+                    >
+                      <div className="aspect-square w-full overflow-hidden bg-cream relative">
+                        <img
+                          src={file.objectUrl}
+                          alt="Uploading..."
+                          className="h-full w-full object-cover opacity-60"
                         />
-                        {isOrganizer && event.venue_id && (
-                          <ManageAccessibilityOverridesDialog venueId={event.venue_id} user={user} />
+                        {file.status === "uploading" && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/45 p-2">
+                            <span className="font-mono text-xs font-bold text-white mb-2">
+                              {file.progress}%
+                            </span>
+                            <div className="w-full bg-white/30 h-2 rounded-full overflow-hidden">
+                              <div
+                                className="bg-lime h-full transition-all duration-200"
+                                style={{ width: `${file.progress}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                        {file.status === "success" && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-lime/80 text-black font-display font-black text-sm uppercase">
+                            Uploaded ✓
+                          </div>
+                        )}
+                        {file.status === "error" && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-500/90 text-white p-2">
+                            <span className="font-display font-black text-xs uppercase text-center">
+                              Failed
+                            </span>
+                            <span className="font-mono text-[9px] text-center mt-1 truncate w-full">
+                              {file.errorMsg}
+                            </span>
+                          </div>
                         )}
                       </div>
+                      <p className="font-mono text-[10px] text-black/70 truncate mt-2">
+                        {file.name}
+                      </p>
                     </div>
-                    <AccessibilityBadges
-                      features={event.venues?.accessibility_features || event.accessibility_features}
-                      overrides={overrides || []}
+                  ))}
+                </div>
+              )}
+
+              {/* Gallery Images List */}
+              {galleryPhotos.length === 0 && uploadingFiles.length === 0 ? (
+                <div className="neu-border bg-cream p-8 text-center font-mono text-sm text-black/50 italic">
+                  No photos uploaded yet for this event.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+                  {galleryPhotos.map((url: string, idx: number) => (
+                    <div
+                      key={url}
+                      className="neu-border bg-white p-2 hover:scale-[1.02] transition-transform duration-300 group cursor-zoom-in"
+                      onClick={() => {
+                        setLightboxSrc(url);
+                      }}
+                    >
+                      <div className="aspect-square w-full overflow-hidden bg-cream">
+                        <img
+                          src={url}
+                          alt={`Event gallery photo ${idx + 1}`}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Social Share */}
+            <div className="mt-10 border-t-2 border-black pt-6">
+              <h3 className="font-mono text-xs font-bold uppercase text-blue-900">
+                Share with Friends
+              </h3>
+              <div className="mt-4">
+                <ShareMenu
+                  url={shareUrl}
+                  title={event.title}
+                  text={`Check out this event: ${event.title}`}
+                />
+              </div>
+            </div>
+
+            <EventFaqSection eventId={event.id} isOrganizer={isOrganizer} userId={user?.id} />
+            {user && <EventCoSponsorshipPortal eventId={event.id} isOrganizer={isOrganizer} />}
+            {/* Kanban Board for Organizer */}
+            {isOrganizer && (
+              <div className="mt-12 border-t-4 border-black pt-10">
+                <h2 className="font-display text-2xl font-black uppercase tracking-tight text-black mb-6">
+                  Attendee Manager
+                </h2>
+                <div className="mb-8 rounded-2xl border-4 border-black bg-white p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-display text-xl font-black uppercase tracking-tight text-black">
+                        QR Check-in
+                      </h3>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        Verify a signed ticket from the camera or an uploaded image to mark the
+                        attendee as checked in.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-5">
+                    <SteganographicQRScanner
+                      onVerificationSuccess={(payload) => {
+                        checkInRsvp.mutate({ rsvpId: payload.rsvpId });
+                      }}
                     />
                   </div>
-                )}
-                {event.is_high_risk && (
-                  <div className="mt-8 border-2 border-black bg-yellow-50 p-6 font-mono text-sm">
-                    <h2 className="text-xl font-bold uppercase tracking-tight text-black mb-3">
-                      Co-Signer Approvals
-                    </h2>
-                    <p className="text-xs text-gray-700 mb-4">
-                      This is a high-risk event. It will be published once all required stakeholders
-                      sign off.
-                    </p>
-                    <div className="space-y-3">
-                      {signatures.map((sig) => (
-                        <div
-                          key={sig.id}
-                          className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-black/20 pb-2"
-                        >
-                          <div>
-                            <span className="font-bold text-black">{sig.signer_role}</span>:{" "}
-                            {sig.signer_name} ({sig.signer_email})
-                          </div>
-                          <div className="mt-1 sm:mt-0 flex items-center gap-3">
-                            {sig.signed_at ? (
-                              <span className="bg-green-100 text-green-800 border border-green-800 px-2 py-0.5 font-bold uppercase text-xs">
-                                Signed ✓
-                              </span>
-                            ) : (
-                              <>
-                                <span className="bg-red-100 text-red-800 border border-red-800 px-2 py-0.5 font-bold uppercase text-xs">
-                                  Pending
-                                </span>
-                                <a
-                                  href={`${getSupabaseUrl()}/functions/v1/co-signer-approval?token=${sig.signature_token}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="bg-white hover:bg-cream border border-black px-2 py-0.5 text-xs font-bold uppercase underline"
-                                >
-                                  Approval Link ↗
-                                </a>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {/* Optimistic UI & Progress for Uploading Files */}
-                {uploadingFiles.length > 0 && (
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 mb-6">
-                    {uploadingFiles.map((file) => (
-                      <div
-                        key={file.id}
-                        className="relative neu-border bg-white p-2 flex flex-col justify-between"
-                      >
-                        <div className="aspect-square w-full overflow-hidden bg-cream relative">
-                          <img
-                            src={file.objectUrl}
-                            alt="Uploading..."
-                            className="h-full w-full object-cover opacity-60"
-                          />
-                          {file.status === "uploading" && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/45 p-2">
-                              <span className="font-mono text-xs font-bold text-white mb-2">
-                                {file.progress}%
-                              </span>
-                              <div className="w-full bg-white/30 h-2 rounded-full overflow-hidden">
-                                <div
-                                  className="bg-lime h-full transition-all duration-200"
-                                  style={{ width: `${file.progress}%` }}
-                                />
-                              </div>
-                            </div>
-                          )}
-                          {file.status === "success" && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-lime/80 text-black font-display font-black text-sm uppercase">
-                              Uploaded ✓
-                            </div>
-                          )}
-                          {file.status === "error" && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-500/90 text-white p-2">
-                              <span className="font-display font-black text-xs uppercase text-center">
-                                Failed
-                              </span>
-                              <span className="font-mono text-[9px] text-center mt-1 truncate w-full">
-                                {file.errorMsg}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                        <p className="font-mono text-[10px] text-black/70 truncate mt-2">
-                          {file.name}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Gallery Images List */}
-                {galleryPhotos.length === 0 && uploadingFiles.length === 0 ? (
-                  <div className="neu-border bg-cream p-8 text-center font-mono text-sm text-black/50 italic">
-                    No photos uploaded yet for this event.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-                    {galleryPhotos.map((url: string, idx: number) => (
-                      <div
-                        key={url}
-                        className="neu-border bg-white p-2 hover:scale-[1.02] transition-transform duration-300 group cursor-zoom-in"
-                        onClick={() => {
-                          setLightboxSrc(url);
-                        }}
-                      >
-                        <div className="aspect-square w-full overflow-hidden bg-cream">
-                          <img
-                            src={url}
-                            alt={`Event gallery photo ${idx + 1}`}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Social Share */}
-              <div className="mt-10 border-t-2 border-black pt-6">
-                <h3 className="font-mono text-xs font-bold uppercase text-blue-900">
-                  Share with Friends
-                </h3>
-                <div className="mt-4">
-                  <ShareMenu
-                    url={shareUrl}
-                    title={event.title}
-                    text={`Check out this event: ${event.title}`}
-                  />
                 </div>
-              </div>
+                <DragDropContext onDragEnd={onDragEnd}>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Waitlisted Column */}
+                    <div className="flex flex-col border-4 border-black bg-amber-50 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                      <h3 className="font-display text-lg font-bold uppercase tracking-wider text-black mb-4 border-b-2 border-black pb-2 flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <Clock size={18} className="text-amber-600" /> Waitlisted
+                        </span>
+                        <span className="bg-black text-white px-2 py-0.5 text-xs font-mono">
+                          {columns.waitlisted.length}
+                        </span>
+                      </h3>
+                      <Droppable droppableId="waitlisted">
+                        {(provided, snapshot) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.droppableProps}
+                            className={`flex-1 min-h-[300px] space-y-3 p-1 transition-colors ${
+                              snapshot.isDraggingOver ? "bg-amber-100/50" : ""
+                            }`}
+                          >
+                            {columns.waitlisted.map((card, index) => (
+                              <Draggable key={card.id} draggableId={card.id} index={index}>
+                                {(provided, snapshot) => (
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                    className={`border-2 border-black bg-white p-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between ${
+                                      snapshot.isDragging
+                                        ? "rotate-2 scale-105 z-50 bg-amber-50/90"
+                                        : ""
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      {card.avatarUrl ? (
+                                        <img
+                                          src={card.avatarUrl}
+                                          alt={card.name}
+                                          className="h-10 w-10 border-2 border-black object-cover rounded-none"
+                                        />
+                                      ) : (
+                                        <div className="flex h-10 w-10 items-center justify-center border-2 border-black bg-lime text-xs font-mono font-bold uppercase text-black select-none">
+                                          {card.name.substring(0, 2)}
+                                        </div>
+                                      )}
+                                      <div className="min-w-0">
+                                        <p className="truncate font-mono text-sm font-bold text-black">
+                                          {card.name}
+                                        </p>
+                                        <p className="font-mono text-[9px] text-black/60 uppercase">
+                                          {card.rsvpId ? "Requested" : "Waitlist"}
+                                        </p>
+                                        {card.hasAccommodation && card.rsvpId && (
+                                          <div className="mt-1 flex flex-col gap-0.5">
+                                            <span className="font-mono text-[10px] font-bold text-red-600 flex items-center gap-1 select-none">
+                                              🔴 Accessibility accommodation requested
+                                            </span>
+                                            <button
+                                              type="button"
+                                              className="w-fit text-[10px] font-bold underline hover:text-black/60 font-mono uppercase text-left cursor-pointer"
+                                              onClick={() => handleViewAccommodation(card.rsvpId!)}
+                                            >
+                                              [Decrypt / View]
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex gap-1 ml-2">
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              size="icon"
+                                              variant="outline"
+                                              className="h-7 w-7 border border-black rounded-none bg-emerald-50 hover:bg-emerald-200"
+                                              onClick={() =>
+                                                updateRsvpStatus.mutate({
+                                                  userId: card.userId,
+                                                  rsvpId: card.rsvpId,
+                                                  newStatus: "approved",
+                                                })
+                                              }
+                                            >
+                                              <CheckCircle size={14} className="text-emerald-700" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Approve RSVP</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
 
-              <EventFaqSection eventId={event.id} isOrganizer={isOrganizer} userId={user?.id} />
-              {user && <EventCoSponsorshipPortal eventId={event.id} isOrganizer={isOrganizer} />}
-              {/* Kanban Board for Organizer */}
-              {isOrganizer && (
-                <div className="mt-12 border-t-4 border-black pt-10">
-                  <h2 className="font-display text-2xl font-black uppercase tracking-tight text-black mb-6">
-                    Attendee Manager
-                  </h2>
-                  <div className="mb-8 rounded-2xl border-4 border-black bg-white p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h3 className="font-display text-xl font-black uppercase tracking-tight text-black">
-                          QR Check-in
-                        </h3>
-                        <p className="mt-2 text-sm text-muted-foreground">
-                          Verify a signed ticket from the camera or an uploaded image to mark the
-                          attendee as checked in.
-                        </p>
-                      </div>
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              size="icon"
+                                              variant="outline"
+                                              className="h-7 w-7 border border-black rounded-none bg-rose-50 hover:bg-rose-200"
+                                              onClick={() =>
+                                                updateRsvpStatus.mutate({
+                                                  userId: card.userId,
+                                                  rsvpId: card.rsvpId,
+                                                  newStatus: "rejected",
+                                                })
+                                              }
+                                            >
+                                              <X size={14} className="text-rose-700" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Reject RSVP</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                    </div>
+                                  </div>
+                                )}
+                              </Draggable>
+                            ))}
+                            {provided.placeholder}
+                          </div>
+                        )}
+                      </Droppable>
                     </div>
-                    <div className="mt-5">
-                      <img src="/qr-code-placeholder.svg" alt="Scan QR Code" className="w-48 h-48 mx-auto" />
+
+                    {/* Approved Column */}
+                    <div className="flex flex-col border-4 border-black bg-emerald-50 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                      <h3 className="font-display text-lg font-bold uppercase tracking-wider text-black mb-4 border-b-2 border-black pb-2 flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <CheckCircle size={18} className="text-emerald-600" /> Approved
+                        </span>
+                        <span className="bg-black text-white px-2 py-0.5 text-xs font-mono">
+                          {columns.approved.length}
+                        </span>
+                      </h3>
+                      <Droppable droppableId="approved">
+                        {(provided, snapshot) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.droppableProps}
+                            className={`flex-1 min-h-[300px] space-y-3 p-1 transition-colors ${
+                              snapshot.isDraggingOver ? "bg-emerald-100/50" : ""
+                            }`}
+                          >
+                            {columns.approved.map((card, index) => (
+                              <Draggable key={card.id} draggableId={card.id} index={index}>
+                                {(provided, snapshot) => (
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                    className={`border-2 border-black bg-white p-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between ${
+                                      snapshot.isDragging
+                                        ? "rotate-2 scale-105 z-50 bg-emerald-50/90"
+                                        : ""
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      {card.avatarUrl ? (
+                                        <img
+                                          src={card.avatarUrl}
+                                          alt={card.name}
+                                          className="h-10 w-10 border-2 border-black object-cover rounded-none"
+                                        />
+                                      ) : (
+                                        <div className="flex h-10 w-10 items-center justify-center border-2 border-black bg-lime text-xs font-mono font-bold uppercase text-black select-none">
+                                          {card.name.substring(0, 2)}
+                                        </div>
+                                      )}
+                                      <div className="min-w-0">
+                                        <p className="truncate font-mono text-sm font-bold text-black">
+                                          {card.name}
+                                        </p>
+                                        <p className="font-mono text-[9px] text-black/60 uppercase">
+                                          Approved
+                                        </p>
+                                        {card.hasAccommodation && card.rsvpId && (
+                                          <div className="mt-1 flex flex-col gap-0.5">
+                                            <span className="font-mono text-[10px] font-bold text-red-600 flex items-center gap-1 select-none">
+                                              🔴 Accessibility accommodation requested
+                                            </span>
+                                            <button
+                                              type="button"
+                                              className="w-fit text-[10px] font-bold underline hover:text-black/60 font-mono uppercase text-left cursor-pointer"
+                                              onClick={() => handleViewAccommodation(card.rsvpId!)}
+                                            >
+                                              [Decrypt / View]
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex gap-1 ml-2">
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              size="icon"
+                                              variant="outline"
+                                              className="h-7 w-7 border border-black rounded-none bg-amber-50 hover:bg-amber-200"
+                                              onClick={() =>
+                                                updateRsvpStatus.mutate({
+                                                  userId: card.userId,
+                                                  rsvpId: card.rsvpId,
+                                                  newStatus: "waitlisted",
+                                                })
+                                              }
+                                            >
+                                              <Clock size={14} className="text-amber-700" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Move to Waitlist</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              size="icon"
+                                              variant="outline"
+                                              className="h-7 w-7 border border-black rounded-none bg-rose-50 hover:bg-rose-200"
+                                              onClick={() =>
+                                                updateRsvpStatus.mutate({
+                                                  userId: card.userId,
+                                                  rsvpId: card.rsvpId,
+                                                  newStatus: "rejected",
+                                                })
+                                              }
+                                            >
+                                              <X size={14} className="text-rose-700" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Reject RSVP</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                    </div>
+                                  </div>
+                                )}
+                              </Draggable>
+                            ))}
+                            {provided.placeholder}
+                          </div>
+                        )}
+                      </Droppable>
+                    </div>
+
+                    {/* Rejected Column */}
+                    <div className="flex flex-col border-4 border-black bg-rose-50 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                      <h3 className="font-display text-lg font-bold uppercase tracking-wider text-black mb-4 border-b-2 border-black pb-2 flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          <X size={18} className="text-rose-600" /> Rejected
+                        </span>
+                        <span className="bg-black text-white px-2 py-0.5 text-xs font-mono">
+                          {columns.rejected.length}
+                        </span>
+                      </h3>
+                      <Droppable droppableId="rejected">
+                        {(provided, snapshot) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.droppableProps}
+                            className={`flex-1 min-h-[300px] space-y-3 p-1 transition-colors ${
+                              snapshot.isDraggingOver ? "bg-rose-100/50" : ""
+                            }`}
+                          >
+                            {columns.rejected.map((card, index) => (
+                              <Draggable key={card.id} draggableId={card.id} index={index}>
+                                {(provided, snapshot) => (
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                    className={`border-2 border-black bg-white p-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between ${
+                                      snapshot.isDragging
+                                        ? "rotate-2 scale-105 z-50 bg-rose-50/90"
+                                        : ""
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      {card.avatarUrl ? (
+                                        <img
+                                          src={card.avatarUrl}
+                                          alt={card.name}
+                                          className="h-10 w-10 border-2 border-black object-cover rounded-none"
+                                        />
+                                      ) : (
+                                        <div className="flex h-10 w-10 items-center justify-center border-2 border-black bg-lime text-xs font-mono font-bold uppercase text-black select-none">
+                                          {card.name.substring(0, 2)}
+                                        </div>
+                                      )}
+                                      <div className="min-w-0">
+                                        <p className="truncate font-mono text-sm font-bold text-black">
+                                          {card.name}
+                                        </p>
+                                        <p className="font-mono text-[9px] text-black/60 uppercase">
+                                          Rejected
+                                        </p>
+                                        {card.hasAccommodation && card.rsvpId && (
+                                          <div className="mt-1 flex flex-col gap-0.5">
+                                            <span className="font-mono text-[10px] font-bold text-red-600 flex items-center gap-1 select-none">
+                                              🔴 Accessibility accommodation requested
+                                            </span>
+                                            <button
+                                              type="button"
+                                              className="w-fit text-[10px] font-bold underline hover:text-black/60 font-mono uppercase text-left cursor-pointer"
+                                              onClick={() => handleViewAccommodation(card.rsvpId!)}
+                                            >
+                                              [Decrypt / View]
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex gap-1 ml-2">
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              size="icon"
+                                              variant="outline"
+                                              className="h-7 w-7 border border-black rounded-none bg-amber-50 hover:bg-amber-200"
+                                              onClick={() =>
+                                                updateRsvpStatus.mutate({
+                                                  userId: card.userId,
+                                                  rsvpId: card.rsvpId,
+                                                  newStatus: "waitlisted",
+                                                })
+                                              }
+                                            >
+                                              <Clock size={14} className="text-amber-700" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Move to Waitlist</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              size="icon"
+                                              variant="outline"
+                                              className="h-7 w-7 border border-black rounded-none bg-emerald-50 hover:bg-emerald-200"
+                                              onClick={() =>
+                                                updateRsvpStatus.mutate({
+                                                  userId: card.userId,
+                                                  rsvpId: card.rsvpId,
+                                                  newStatus: "approved",
+                                                })
+                                              }
+                                            >
+                                              <CheckCircle size={14} className="text-emerald-700" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>Approve RSVP</p>
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                    </div>
+                                  </div>
+                                )}
+                              </Draggable>
+                            ))}
+                            {provided.placeholder}
+                          </div>
+                        )}
+                      </Droppable>
                     </div>
                   </div>
-                  <DragDropContext onDragEnd={onDragEnd}>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      {/* Waitlisted Column */}
-                      <div className="flex flex-col border-4 border-black bg-amber-50 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-                        <h3 className="font-display text-lg font-bold uppercase tracking-wider text-black mb-4 border-b-2 border-black pb-2 flex items-center justify-between">
-                          <span className="flex items-center gap-2">
-                            <Clock size={18} className="text-amber-600" /> Waitlisted
-                          </span>
-                          <span className="bg-black text-white px-2 py-0.5 text-xs font-mono">
-                            {columns.waitlisted.length}
-                          </span>
-                        </h3>
-                        <Droppable droppableId="waitlisted">
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.droppableProps}
-                              className={`flex-1 min-h-[300px] space-y-3 p-1 transition-colors ${
-                                snapshot.isDraggingOver ? "bg-amber-100/50" : ""
-                              }`}
-                            >
-                              {columns.waitlisted.map((card, index) => (
-                                <Draggable key={card.id} draggableId={card.id} index={index}>
-                                  {(provided, snapshot) => (
-                                    <div
-                                      ref={provided.innerRef}
-                                      {...provided.draggableProps}
-                                      {...provided.dragHandleProps}
-                                      className={`border-2 border-black bg-white p-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between ${
-                                        snapshot.isDragging
-                                          ? "rotate-2 scale-105 z-50 bg-amber-50/90"
-                                          : ""
-                                      }`}
-                                    >
-                                      <div className="flex items-center gap-3 min-w-0">
-                                        {card.avatarUrl ? (
-                                          <img
-                                            src={card.avatarUrl}
-                                            alt={card.name}
-                                            className="h-10 w-10 border-2 border-black object-cover rounded-none"
-                                          />
-                                        ) : (
-                                          <div className="flex h-10 w-10 items-center justify-center border-2 border-black bg-lime text-xs font-mono font-bold uppercase text-black select-none">
-                                            {card.name.substring(0, 2)}
-                                          </div>
-                                        )}
-                                        <div className="min-w-0">
-                                          <p className="truncate font-mono text-sm font-bold text-black">
-                                            {card.name}
-                                          </p>
-                                          <p className="font-mono text-[9px] text-black/60 uppercase">
-                                            {card.rsvpId ? "Requested" : "Waitlist"}
-                                          </p>
-                                          {card.hasAccommodation && card.rsvpId && (
-                                            <div className="mt-1 flex flex-col gap-0.5">
-                                              <span className="font-mono text-[10px] font-bold text-red-600 flex items-center gap-1 select-none">
-                                                🔴 Accessibility accommodation requested
-                                              </span>
-                                              <button
-                                                type="button"
-                                                className="w-fit text-[10px] font-bold underline hover:text-black/60 font-mono uppercase text-left cursor-pointer"
-                                                onClick={() => handleViewAccommodation(card.rsvpId!)}
-                                              >
-                                                [Decrypt / View]
-                                              </button>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <div className="flex gap-1 ml-2">
-                                        <TooltipProvider>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Button
-                                                size="icon"
-                                                variant="outline"
-                                                className="h-7 w-7 border border-black rounded-none bg-emerald-50 hover:bg-emerald-200"
-                                                onClick={() =>
-                                                  updateRsvpStatus.mutate({
-                                                    userId: card.userId,
-                                                    rsvpId: card.rsvpId,
-                                                    newStatus: "approved",
-                                                  })
-                                                }
-                                              >
-                                                <CheckCircle size={14} className="text-emerald-700" />
-                                              </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              <p>Approve RSVP</p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-
-                                        <TooltipProvider>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Button
-                                                size="icon"
-                                                variant="outline"
-                                                className="h-7 w-7 border border-black rounded-none bg-rose-50 hover:bg-rose-200"
-                                                onClick={() =>
-                                                  updateRsvpStatus.mutate({
-                                                    userId: card.userId,
-                                                    rsvpId: card.rsvpId,
-                                                    newStatus: "rejected",
-                                                  })
-                                                }
-                                              >
-                                                <X size={14} className="text-rose-700" />
-                                              </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              <p>Reject RSVP</p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-                                      </div>
-                                    </div>
-                                  )}
-                                </Draggable>
-                              ))}
-                              {provided.placeholder}
-                            </div>
-                          )}
-                        </Droppable>
-                      </div>
-
-                      {/* Approved Column */}
-                      <div className="flex flex-col border-4 border-black bg-emerald-50 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-                        <h3 className="font-display text-lg font-bold uppercase tracking-wider text-black mb-4 border-b-2 border-black pb-2 flex items-center justify-between">
-                          <span className="flex items-center gap-2">
-                            <CheckCircle size={18} className="text-emerald-600" /> Approved
-                          </span>
-                          <span className="bg-black text-white px-2 py-0.5 text-xs font-mono">
-                            {columns.approved.length}
-                          </span>
-                        </h3>
-                        <Droppable droppableId="approved">
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.droppableProps}
-                              className={`flex-1 min-h-[300px] space-y-3 p-1 transition-colors ${
-                                snapshot.isDraggingOver ? "bg-emerald-100/50" : ""
-                              }`}
-                            >
-                              {columns.approved.map((card, index) => (
-                                <Draggable key={card.id} draggableId={card.id} index={index}>
-                                  {(provided, snapshot) => (
-                                    <div
-                                      ref={provided.innerRef}
-                                      {...provided.draggableProps}
-                                      {...provided.dragHandleProps}
-                                      className={`border-2 border-black bg-white p-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between ${
-                                        snapshot.isDragging
-                                          ? "rotate-2 scale-105 z-50 bg-emerald-50/90"
-                                          : ""
-                                      }`}
-                                    >
-                                      <div className="flex items-center gap-3 min-w-0">
-                                        {card.avatarUrl ? (
-                                          <img
-                                            src={card.avatarUrl}
-                                            alt={card.name}
-                                            className="h-10 w-10 border-2 border-black object-cover rounded-none"
-                                          />
-                                        ) : (
-                                          <div className="flex h-10 w-10 items-center justify-center border-2 border-black bg-lime text-xs font-mono font-bold uppercase text-black select-none">
-                                            {card.name.substring(0, 2)}
-                                          </div>
-                                        )}
-                                        <div className="min-w-0">
-                                          <p className="truncate font-mono text-sm font-bold text-black">
-                                            {card.name}
-                                          </p>
-                                          <p className="font-mono text-[9px] text-black/60 uppercase">
-                                            Approved
-                                          </p>
-                                          {card.hasAccommodation && card.rsvpId && (
-                                            <div className="mt-1 flex flex-col gap-0.5">
-                                              <span className="font-mono text-[10px] font-bold text-red-600 flex items-center gap-1 select-none">
-                                                🔴 Accessibility accommodation requested
-                                              </span>
-                                              <button
-                                                type="button"
-                                                className="w-fit text-[10px] font-bold underline hover:text-black/60 font-mono uppercase text-left cursor-pointer"
-                                                onClick={() => handleViewAccommodation(card.rsvpId!)}
-                                              >
-                                                [Decrypt / View]
-                                              </button>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <div className="flex gap-1 ml-2">
-                                        <TooltipProvider>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Button
-                                                size="icon"
-                                                variant="outline"
-                                                className="h-7 w-7 border border-black rounded-none bg-amber-50 hover:bg-amber-200"
-                                                onClick={() =>
-                                                  updateRsvpStatus.mutate({
-                                                    userId: card.userId,
-                                                    rsvpId: card.rsvpId,
-                                                    newStatus: "waitlisted",
-                                                  })
-                                                }
-                                              >
-                                                <Clock size={14} className="text-amber-700" />
-                                              </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              <p>Move to Waitlist</p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-
-                                        <TooltipProvider>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Button
-                                                size="icon"
-                                                variant="outline"
-                                                className="h-7 w-7 border border-black rounded-none bg-rose-50 hover:bg-rose-200"
-                                                onClick={() =>
-                                                  updateRsvpStatus.mutate({
-                                                    userId: card.userId,
-                                                    rsvpId: card.rsvpId,
-                                                    newStatus: "rejected",
-                                                  })
-                                                }
-                                              >
-                                                <X size={14} className="text-rose-700" />
-                                              </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              <p>Reject RSVP</p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-                                      </div>
-                                    </div>
-                                  )}
-                                </Draggable>
-                              ))}
-                              {provided.placeholder}
-                            </div>
-                          )}
-                        </Droppable>
-                      </div>
-
-                      {/* Rejected Column */}
-                      <div className="flex flex-col border-4 border-black bg-rose-50 p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-                        <h3 className="font-display text-lg font-bold uppercase tracking-wider text-black mb-4 border-b-2 border-black pb-2 flex items-center justify-between">
-                          <span className="flex items-center gap-2">
-                            <X size={18} className="text-rose-600" /> Rejected
-                          </span>
-                          <span className="bg-black text-white px-2 py-0.5 text-xs font-mono">
-                            {columns.rejected.length}
-                          </span>
-                        </h3>
-                        <Droppable droppableId="rejected">
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.droppableProps}
-                              className={`flex-1 min-h-[300px] space-y-3 p-1 transition-colors ${
-                                snapshot.isDraggingOver ? "bg-rose-100/50" : ""
-                              }`}
-                            >
-                              {columns.rejected.map((card, index) => (
-                                <Draggable key={card.id} draggableId={card.id} index={index}>
-                                  {(provided, snapshot) => (
-                                    <div
-                                      ref={provided.innerRef}
-                                      {...provided.draggableProps}
-                                      {...provided.dragHandleProps}
-                                      className={`border-2 border-black bg-white p-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between ${
-                                        snapshot.isDragging
-                                          ? "rotate-2 scale-105 z-50 bg-rose-50/90"
-                                          : ""
-                                      }`}
-                                    >
-                                      <div className="flex items-center gap-3 min-w-0">
-                                        {card.avatarUrl ? (
-                                          <img
-                                            src={card.avatarUrl}
-                                            alt={card.name}
-                                            className="h-10 w-10 border-2 border-black object-cover rounded-none"
-                                          />
-                                        ) : (
-                                          <div className="flex h-10 w-10 items-center justify-center border-2 border-black bg-lime text-xs font-mono font-bold uppercase text-black select-none">
-                                            {card.name.substring(0, 2)}
-                                          </div>
-                                        )}
-                                        <div className="min-w-0">
-                                          <p className="truncate font-mono text-sm font-bold text-black">
-                                            {card.name}
-                                          </p>
-                                          <p className="font-mono text-[9px] text-black/60 uppercase">
-                                            Rejected
-                                          </p>
-                                          {card.hasAccommodation && card.rsvpId && (
-                                            <div className="mt-1 flex flex-col gap-0.5">
-                                              <span className="font-mono text-[10px] font-bold text-red-600 flex items-center gap-1 select-none">
-                                                🔴 Accessibility accommodation requested
-                                              </span>
-                                              <button
-                                                type="button"
-                                                className="w-fit text-[10px] font-bold underline hover:text-black/60 font-mono uppercase text-left cursor-pointer"
-                                                onClick={() => handleViewAccommodation(card.rsvpId!)}
-                                              >
-                                                [Decrypt / View]
-                                              </button>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <div className="flex gap-1 ml-2">
-                                        <TooltipProvider>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Button
-                                                size="icon"
-                                                variant="outline"
-                                                className="h-7 w-7 border border-black rounded-none bg-amber-50 hover:bg-amber-200"
-                                                onClick={() =>
-                                                  updateRsvpStatus.mutate({
-                                                    userId: card.userId,
-                                                    rsvpId: card.rsvpId,
-                                                    newStatus: "waitlisted",
-                                                  })
-                                                }
-                                              >
-                                                <Clock size={14} className="text-amber-700" />
-                                              </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              <p>Move to Waitlist</p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-
-                                        <TooltipProvider>
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Button
-                                                size="icon"
-                                                variant="outline"
-                                                className="h-7 w-7 border border-black rounded-none bg-emerald-50 hover:bg-emerald-200"
-                                                onClick={() =>
-                                                  updateRsvpStatus.mutate({
-                                                    userId: card.userId,
-                                                    rsvpId: card.rsvpId,
-                                                    newStatus: "approved",
-                                                  })
-                                                }
-                                              >
-                                                <CheckCircle size={14} className="text-emerald-700" />
-                                              </Button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                              <p>Approve RSVP</p>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        </TooltipProvider>
-                                      </div>
-                                    </div>
-                                  )}
-                                </Draggable>
-                              ))}
-                              {provided.placeholder}
-                            </div>
-                          )}
-                        </Droppable>
-                      </div>
-                    </div>
-                  </DragDropContext>
-                </div>
-              )}
-            </div>
-          </section>
-          {/* Sticky Mobile RSVP Bar */}
-          <div className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between border-t-2 border-black bg-white p-4 pb-6 shadow-lg md:hidden">
-            <div className="flex flex-col">
-              <span className="font-mono text-xs font-bold uppercase text-black/60">
-                {attendeeCount} {maxAttendees ? `/ ${maxAttendees}` : ""} going
-              </span>
-              {isOnWaitlist && waitlistPosition > 0 && (
-                <span className="font-mono text-[10px] font-bold text-amber-700">
-                  Waitlist position: #{waitlistPosition}
-                </span>
-              )}
-            </div>
-            {hasTiersOrSurge ? (
-              <Button
-                onClick={() => {
-                  const el = document.getElementById("ticket-pricing-section");
-                  if (el) el.scrollIntoView({ behavior: "smooth" });
-                }}
-                variant="primary"
-              >
-                Buy Ticket
-              </Button>
-            ) : hasRsvpd ? (
-              <Button onClick={handleRsvpClick} disabled={toggleRsvp.isPending} variant="secondary">
-                {toggleRsvp.isPending ? "Updating..." : "RSVP'd ✓"}
-              </Button>
-            ) : isAtCapacity ? (
-              <Button
-                onClick={() => {
-                  if (!user) {
-                    toast.error("Please log in to join waitlist");
-                    return;
-                  }
-
-                  // --- ISSUE #4249: BLOCK WAITLIST IF ASSET OVERDUE ---
-                  if (hasOverdueAssets) {
-                    toast.error("Action Blocked: Please return your overdue photography equipment to join waitlists.");
-                    return;
-                  }
-                  // ----------------------------------------------------
-
-                  toggleWaitlist.mutate({ isOnWaitlist });
-                }}
-                disabled={toggleWaitlist.isPending}
-                variant={isOnWaitlist ? "secondary" : "primary"}
-              >
-                {toggleWaitlist.isPending
-                  ? "Updating..."
-                  : isOnWaitlist
-                    ? "On Waitlist ✓"
-                    : "Join Waitlist"}
-              </Button>
-            ) : (
-              <Button onClick={handleRsvpClick} disabled={toggleRsvp.isPending} variant="primary">
-                {toggleRsvp.isPending ? "Updating..." : "RSVP NOW"}
-              </Button>
+                </DragDropContext>
+              </div>
             )}
           </div>
-          {/* RSVP Cancel Confirmation Modal */}
-          <ConfirmModal
-            open={confirmOpen}
-            title="Cancel RSVP"
-            description="Are you sure you want to cancel your RSVP for this event? Your spot will be released."
-            onConfirm={handleConfirmCancel}
-            onCancel={() => setConfirmOpen(false)}
-          />
-          {/* RSVP Accessibility Accommodations Modal */}
-          <Dialog
-            open={rsvpDialogOpen}
-            onOpenChange={(open) => {
-              if (!open) {
-                // Reset states when closed
-                setNeedAccommodations(false);
-                setAccommodationsText("");
-                setValidationError("");
-                setCaptchaToken(undefined);
-                setAcknowledgeAllergenWarning(false);
-              }
-              setRsvpDialogOpen(open);
-            }}
-          >
-            <DialogContent variant="brutalist" className="max-w-md font-mono">
-              <DialogHeader className="border-b-2 border-black pb-4">
-                <DialogTitle className="text-xl font-bold uppercase tracking-tight">
-                  RSVP Options
-                </DialogTitle>
-                <DialogDescription className="text-xs text-black/60 font-mono">
-                  Configure your attendance preferences for {event.title}.
-                </DialogDescription>
-              </DialogHeader>
+        </section>
+        {/* Sticky Mobile RSVP Bar */}
+        <div className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between border-t-2 border-black bg-white p-4 pb-6 shadow-lg md:hidden">
+          <div className="flex flex-col">
+            <span className="font-mono text-xs font-bold uppercase text-black/60">
+              {attendeeCount} {maxAttendees ? `/ ${maxAttendees}` : ""} going
+            </span>
+            {isOnWaitlist && waitlistPosition > 0 && (
+              <span className="font-mono text-[10px] font-bold text-amber-700">
+                Waitlist position: #{waitlistPosition}
+              </span>
+            )}
+          </div>
+          {hasTiersOrSurge ? (
+            <Button
+              onClick={() => {
+                const el = document.getElementById("ticket-pricing-section");
+                if (el) el.scrollIntoView({ behavior: "smooth" });
+              }}
+              variant="primary"
+            >
+              Buy Ticket
+            </Button>
+          ) : hasRsvpd ? (
+            <Button onClick={handleRsvpClick} disabled={toggleRsvp.isPending} variant="secondary">
+              {toggleRsvp.isPending ? "Updating..." : "RSVP'd ✓"}
+            </Button>
+          ) : isAtCapacity ? (
+            <Button
+              onClick={() => {
+                if (!user) {
+                  toast.error("Please log in to join waitlist");
+                  return;
+                }
 
-              <div className="space-y-4 py-4">
-                {allergenCollision.hasAbsoluteCollision && allergenCollision.warningMessage && (
-                  <DietaryAllergenWarning
-                    message={allergenCollision.warningMessage}
-                    acknowledged={acknowledgeAllergenWarning}
-                    onAcknowledgeChange={setAcknowledgeAllergenWarning}
-                    disabled={toggleRsvp.isPending}
-                  />
-                )}
-                {requiresHighDemandCaptcha && (
-                  <div className="space-y-2 border-2 border-black bg-yellow-100 p-3">
-                    <p className="font-mono text-xs font-bold uppercase">
-                      High-demand event verification
+                // --- ISSUE #4249: BLOCK WAITLIST IF ASSET OVERDUE ---
+                if (hasOverdueAssets) {
+                  toast.error(
+                    "Action Blocked: Please return your overdue photography equipment to join waitlists.",
+                  );
+                  return;
+                }
+                // ----------------------------------------------------
+
+                toggleWaitlist.mutate({ isOnWaitlist });
+              }}
+              disabled={toggleWaitlist.isPending}
+              variant={isOnWaitlist ? "secondary" : "primary"}
+            >
+              {toggleWaitlist.isPending
+                ? "Updating..."
+                : isOnWaitlist
+                  ? "On Waitlist ✓"
+                  : "Join Waitlist"}
+            </Button>
+          ) : (
+            <Button onClick={handleRsvpClick} disabled={toggleRsvp.isPending} variant="primary">
+              {toggleRsvp.isPending ? "Updating..." : "RSVP NOW"}
+            </Button>
+          )}
+        </div>
+        {/* RSVP Cancel Confirmation Modal */}
+        <ConfirmModal
+          open={confirmOpen}
+          title="Cancel RSVP"
+          description="Are you sure you want to cancel your RSVP for this event? Your spot will be released."
+          onConfirm={handleConfirmCancel}
+          onCancel={() => setConfirmOpen(false)}
+        />
+        {/* RSVP Accessibility Accommodations Modal */}
+        <Dialog
+          open={rsvpDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              // Reset states when closed
+              setNeedAccommodations(false);
+              setAccommodationsText("");
+              setValidationError("");
+              setCaptchaToken(undefined);
+              setAcknowledgeAllergenWarning(false);
+            }
+            setRsvpDialogOpen(open);
+          }}
+        >
+          <DialogContent variant="brutalist" className="max-w-md font-mono">
+            <DialogHeader className="border-b-2 border-black pb-4">
+              <DialogTitle className="text-xl font-bold uppercase tracking-tight">
+                RSVP Options
+              </DialogTitle>
+              <DialogDescription className="text-xs text-black/60 font-mono">
+                Configure your attendance preferences for {event.title}.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-4">
+              {allergenCollision.hasAbsoluteCollision && allergenCollision.warningMessage && (
+                <DietaryAllergenWarning
+                  message={allergenCollision.warningMessage}
+                  acknowledged={acknowledgeAllergenWarning}
+                  onAcknowledgeChange={setAcknowledgeAllergenWarning}
+                  disabled={toggleRsvp.isPending}
+                />
+              )}
+              {requiresHighDemandCaptcha && (
+                <div className="space-y-2 border-2 border-black bg-yellow-100 p-3">
+                  <p className="font-mono text-xs font-bold uppercase">
+                    High-demand event verification
+                  </p>
+                  {captchaConfigured ? (
+                    <CaptchaWidget
+                      siteKey={captchaSiteKey}
+                      provider={captchaProvider}
+                      onToken={(token) => setCaptchaToken(token)}
+                      onError={() => setCaptchaToken(undefined)}
+                      onExpire={() => setCaptchaToken(undefined)}
+                    />
+                  ) : (
+                    <p className="font-mono text-xs text-red-700">
+                      Verification is temporarily unavailable. Please try again later.
                     </p>
-                    {captchaConfigured ? (
-                      <CaptchaWidget
-                        siteKey={captchaSiteKey}
-                        provider={captchaProvider}
-                        onToken={(token) => setCaptchaToken(token)}
-                        onError={() => setCaptchaToken(undefined)}
-                        onExpire={() => setCaptchaToken(undefined)}
-                      />
-                    ) : (
-                      <p className="font-mono text-xs text-red-700">
-                        Verification is temporarily unavailable. Please try again later.
-                      </p>
-                    )}
-                  </div>
-                )}
-                <div className="flex items-center gap-3">
-                  <input
-                    id="req-accommodations-checkbox"
-                    type="checkbox"
-                    checked={needAccommodations}
+                  )}
+                </div>
+              )}
+              <div className="flex items-center gap-3">
+                <input
+                  id="req-accommodations-checkbox"
+                  type="checkbox"
+                  checked={needAccommodations}
+                  disabled={toggleRsvp.isPending}
+                  onChange={(e) => {
+                    setNeedAccommodations(e.target.checked);
+                    if (!e.target.checked) {
+                      setAccommodationsText("");
+                      setValidationError("");
+                    }
+                  }}
+                  className="h-4 w-4 rounded-none border-2 border-black accent-black cursor-pointer"
+                />
+                <Label
+                  htmlFor="req-accommodations-checkbox"
+                  className="font-mono text-sm font-bold uppercase tracking-wide cursor-pointer select-none"
+                >
+                  I require accessibility accommodations
+                </Label>
+              </div>
+
+              {needAccommodations && (
+                <div className="space-y-2 animate-in fade-in duration-200">
+                  <Label
+                    htmlFor="accommodations-text"
+                    className="font-mono text-xs font-black uppercase text-black/60"
+                  >
+                    Describe requested accommodations <span className="text-red-700">*</span>
+                  </Label>
+                  <Textarea
+                    id="accommodations-text"
+                    placeholder="Please describe the accommodation(s) you need to participate in this event (e.g., sign language interpretation, wheelchair access, closed captioning, etc.)."
+                    value={accommodationsText}
                     disabled={toggleRsvp.isPending}
                     onChange={(e) => {
-                      setNeedAccommodations(e.target.checked);
-                      if (!e.target.checked) {
-                        setAccommodationsText("");
-                        setValidationError("");
-                      }
+                      setAccommodationsText(e.target.value);
+                      if (validationError) setValidationError("");
                     }}
-                    className="h-4 w-4 rounded-none border-2 border-black accent-black cursor-pointer"
+                    className="neu-border min-h-[100px] border-2 border-black bg-white p-3 font-mono text-xs focus:ring-lime placeholder:text-neutral-500"
+                    maxLength={1000}
                   />
-                  <Label
-                    htmlFor="req-accommodations-checkbox"
-                    className="font-mono text-sm font-bold uppercase tracking-wide cursor-pointer select-none"
-                  >
-                    I require accessibility accommodations
-                  </Label>
-                </div>
-
-                {needAccommodations && (
-                  <div className="space-y-2 animate-in fade-in duration-200">
-                    <Label
-                      htmlFor="accommodations-text"
-                      className="font-mono text-xs font-black uppercase text-black/60"
-                    >
-                      Describe requested accommodations <span className="text-red-700">*</span>
-                    </Label>
-                    <Textarea
-                      id="accommodations-text"
-                      placeholder="Please describe the accommodation(s) you need to participate in this event (e.g., sign language interpretation, wheelchair access, closed captioning, etc.)."
-                      value={accommodationsText}
-                      disabled={toggleRsvp.isPending}
-                      onChange={(e) => {
-                        setAccommodationsText(e.target.value);
-                        if (validationError) setValidationError("");
-                      }}
-                      className="neu-border min-h-[100px] border-2 border-black bg-white p-3 font-mono text-xs focus:ring-lime placeholder:text-neutral-500"
-                      maxLength={1000}
-                    />
-                    <div className="flex items-center justify-between text-[10px] font-bold text-black/50">
-                      <span className={validationError ? "text-red-600 animate-pulse" : ""}>
-                        {validationError || "Description is required"}
-                      </span>
-                      <span>{accommodationsText.length} / 1000 characters</span>
-                    </div>
-
-                    <div className="bg-blue-50 border-2 border-blue-900 p-3 text-left">
-                      <p className="font-mono text-[11px] leading-relaxed text-blue-900">
-                        🔒 <span className="font-bold">Privacy Notice:</span> This information is kept
-                        private and will only be decrypted for authorized reviewers (the Club
-                        President and event organizers) for event planning. It will not be exposed to
-                        the public.
-                      </p>
-                    </div>
-
-                    {isAfterDeadline && (
-                      <div className="bg-amber-50 border-2 border-amber-600 p-3 text-left flex items-start gap-2">
-                        <span className="text-lg">⚠️</span>
-                        <p className="font-mono text-[11px] leading-relaxed text-amber-955">
-                          This accommodation request is being submitted after the accommodation
-                          deadline. The university may not be able to guarantee that the requested
-                          accommodation can be arranged.
-                        </p>
-                      </div>
-                    )}
+                  <div className="flex items-center justify-between text-[10px] font-bold text-black/50">
+                    <span className={validationError ? "text-red-600 animate-pulse" : ""}>
+                      {validationError || "Description is required"}
+                    </span>
+                    <span>{accommodationsText.length} / 1000 characters</span>
                   </div>
-                )}
-              </div>
 
-              <DialogFooter className="border-t-2 border-black pt-4 flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setNeedAccommodations(false);
-                    setAccommodationsText("");
-                    setValidationError("");
-                    setCaptchaToken(undefined);
-                    setAcknowledgeAllergenWarning(false);
-                    setRsvpDialogOpen(false);
-                  }}
-                  disabled={toggleRsvp.isPending}
-                  className="neu-border font-mono text-xs font-bold uppercase"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    if (allergenCollision.hasAbsoluteCollision && !acknowledgeAllergenWarning) {
-                      return;
-                    }
-                    if (requiresHighDemandCaptcha && !captchaConfigured) {
-                      setValidationError("High-demand verification is temporarily unavailable.");
-                      return;
-                    }
-                    if (requiresHighDemandCaptcha && !captchaToken) {
-                      setValidationError("Complete the CAPTCHA verification before confirming RSVP.");
-                      return;
-                    }
-                    if (needAccommodations) {
-                      if (!accommodationsText.trim()) {
-                        setValidationError("Accommodation description is required when requested.");
-                        return;
-                      }
-                      if (accommodationsText.length > 1000) {
-                        setValidationError("Limit exceeded. Maximum 1000 characters.");
-                        return;
-                      }
-                    }
-
-                    toggleRsvp.mutate({
-                      eventId: event.id,
-                      hasRsvpd: false,
-                      captchaToken,
-                      accommodationsRequested: needAccommodations ? accommodationsText : null,
-                    });
-                  }}
-                  disabled={
-                    toggleRsvp.isPending ||
-                    (requiresHighDemandCaptcha && (!captchaConfigured || !captchaToken)) ||
-                    (allergenCollision.hasAbsoluteCollision && !acknowledgeAllergenWarning)
-                  }
-                  className="neu-border font-mono text-xs font-bold uppercase"
-                >
-                  {toggleRsvp.isPending
-                    ? "Submitting..."
-                    : requiresHighDemandCaptcha && !captchaToken
-                      ? "Complete verification"
-                      : "Confirm RSVP"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-          <ReportDialog
-            isOpen={isReportDialogOpen}
-            onClose={() => setIsReportDialogOpen(false)}
-            targetType="event"
-            targetId={event.id}
-          />
-          {/* Decrypted Accommodations Dialog */}
-          <Dialog open={isDecryptedModalOpen} onOpenChange={setIsDecryptedModalOpen}>
-            <DialogContent className="max-w-md border-4 border-black bg-white p-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] rounded-none">
-              <DialogHeader>
-                <DialogTitle className="font-mono text-xl font-black uppercase text-black">
-                  Decrypted Accommodation Request
-                </DialogTitle>
-              </DialogHeader>
-              <div className="mt-4 font-mono text-sm leading-6">
-                {isDecrypting ? (
-                  <div className="flex flex-col items-center justify-center py-6 gap-3">
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-lime border-t-black" />
-                    <p className="text-xs font-bold uppercase text-black/60">
-                      Decrypting request securely...
+                  <div className="bg-blue-50 border-2 border-blue-900 p-3 text-left">
+                    <p className="font-mono text-[11px] leading-relaxed text-blue-900">
+                      🔒 <span className="font-bold">Privacy Notice:</span> This information is kept
+                      private and will only be decrypted for authorized reviewers (the Club
+                      President and event organizers) for event planning. It will not be exposed to
+                      the public.
                     </p>
                   </div>
-                ) : decryptError ? (
-                  <div className="border-2 border-red-650 bg-red-50 p-4 text-red-700">
-                    <p className="font-bold uppercase text-xs">Access Denied / Error</p>
-                    <p className="mt-1 text-xs">{decryptError}</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="border-2 border-black bg-lime/10 p-4">
-                      <p className="font-bold uppercase text-xs text-black/60">
-                        Accommodation Description:
-                      </p>
-                      <p className="mt-2 whitespace-pre-wrap text-black font-semibold bg-white p-3 border border-black">
-                        {decryptedText}
+
+                  {isAfterDeadline && (
+                    <div className="bg-amber-50 border-2 border-amber-600 p-3 text-left flex items-start gap-2">
+                      <span className="text-lg">⚠️</span>
+                      <p className="font-mono text-[11px] leading-relaxed text-amber-955">
+                        This accommodation request is being submitted after the accommodation
+                        deadline. The university may not be able to guarantee that the requested
+                        accommodation can be arranged.
                       </p>
                     </div>
-                    <div className="border border-black bg-neutral-50 p-3 text-[10px] text-neutral-600">
-                      <p className="font-bold uppercase">🔒 SECURITY AUDIT COMPLIANT</p>
-                      <p className="mt-1">
-                        Your access to this sensitive information has been logged to the permanent
-                        audit trail. Do not duplicate or export this private data.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="mt-6 flex justify-end">
-                <Button
-                  className="neu-press border-2 border-black bg-lime px-4 py-2 font-mono text-xs font-bold uppercase rounded-none text-black hover:bg-lime/90"
-                  onClick={() => setIsDecryptedModalOpen(false)}
-                >
-                  Close
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-          {lightboxSrc && (
-            <div
-              role="button"
-              tabIndex={0}
-              aria-label="Close enlarged image"
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 cursor-zoom-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-              onClick={() => setLightboxSrc(null)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
-                  e.preventDefault();
-                  setLightboxSrc(null);
-                }
-              }}
-            >
-              <img
-                src={lightboxSrc}
-                alt="Enlarged gallery photo"
-                className="max-h-full max-w-full object-contain neu-border border-white"
-              />
+                  )}
+                </div>
+              )}
             </div>
-          )}
-        </SiteShell>
-      </>
-    );
-  }
+
+            <DialogFooter className="border-t-2 border-black pt-4 flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setNeedAccommodations(false);
+                  setAccommodationsText("");
+                  setValidationError("");
+                  setCaptchaToken(undefined);
+                  setAcknowledgeAllergenWarning(false);
+                  setRsvpDialogOpen(false);
+                }}
+                disabled={toggleRsvp.isPending}
+                className="neu-border font-mono text-xs font-bold uppercase"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (allergenCollision.hasAbsoluteCollision && !acknowledgeAllergenWarning) {
+                    return;
+                  }
+                  if (requiresHighDemandCaptcha && !captchaConfigured) {
+                    setValidationError("High-demand verification is temporarily unavailable.");
+                    return;
+                  }
+                  if (requiresHighDemandCaptcha && !captchaToken) {
+                    setValidationError("Complete the CAPTCHA verification before confirming RSVP.");
+                    return;
+                  }
+                  if (needAccommodations) {
+                    if (!accommodationsText.trim()) {
+                      setValidationError("Accommodation description is required when requested.");
+                      return;
+                    }
+                    if (accommodationsText.length > 1000) {
+                      setValidationError("Limit exceeded. Maximum 1000 characters.");
+                      return;
+                    }
+                  }
+
+                  toggleRsvp.mutate({
+                    eventId: event.id,
+                    hasRsvpd: false,
+                    captchaToken,
+                    accommodationsRequested: needAccommodations ? accommodationsText : null,
+                  });
+                }}
+                disabled={
+                  toggleRsvp.isPending ||
+                  (requiresHighDemandCaptcha && (!captchaConfigured || !captchaToken)) ||
+                  (allergenCollision.hasAbsoluteCollision && !acknowledgeAllergenWarning)
+                }
+                className="neu-border font-mono text-xs font-bold uppercase"
+              >
+                {toggleRsvp.isPending
+                  ? "Submitting..."
+                  : requiresHighDemandCaptcha && !captchaToken
+                    ? "Complete verification"
+                    : "Confirm RSVP"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <ReportDialog
+          isOpen={isReportDialogOpen}
+          onClose={() => setIsReportDialogOpen(false)}
+          targetType="event"
+          targetId={event.id}
+        />
+        {/* Decrypted Accommodations Dialog */}
+        <Dialog open={isDecryptedModalOpen} onOpenChange={setIsDecryptedModalOpen}>
+          <DialogContent className="max-w-md border-4 border-black bg-white p-6 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] rounded-none">
+            <DialogHeader>
+              <DialogTitle className="font-mono text-xl font-black uppercase text-black">
+                Decrypted Accommodation Request
+              </DialogTitle>
+            </DialogHeader>
+            <div className="mt-4 font-mono text-sm leading-6">
+              {isDecrypting ? (
+                <div className="flex flex-col items-center justify-center py-6 gap-3">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-lime border-t-black" />
+                  <p className="text-xs font-bold uppercase text-black/60">
+                    Decrypting request securely...
+                  </p>
+                </div>
+              ) : decryptError ? (
+                <div className="border-2 border-red-650 bg-red-50 p-4 text-red-700">
+                  <p className="font-bold uppercase text-xs">Access Denied / Error</p>
+                  <p className="mt-1 text-xs">{decryptError}</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="border-2 border-black bg-lime/10 p-4">
+                    <p className="font-bold uppercase text-xs text-black/60">
+                      Accommodation Description:
+                    </p>
+                    <p className="mt-2 whitespace-pre-wrap text-black font-semibold bg-white p-3 border border-black">
+                      {decryptedText}
+                    </p>
+                  </div>
+                  <div className="border border-black bg-neutral-50 p-3 text-[10px] text-neutral-600">
+                    <p className="font-bold uppercase">🔒 SECURITY AUDIT COMPLIANT</p>
+                    <p className="mt-1">
+                      Your access to this sensitive information has been logged to the permanent
+                      audit trail. Do not duplicate or export this private data.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="mt-6 flex justify-end">
+              <Button
+                className="neu-press border-2 border-black bg-lime px-4 py-2 font-mono text-xs font-bold uppercase rounded-none text-black hover:bg-lime/90"
+                onClick={() => setIsDecryptedModalOpen(false)}
+              >
+                Close
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+        {lightboxSrc && (
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="Close enlarged image"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 cursor-zoom-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            onClick={() => setLightboxSrc(null)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
+                e.preventDefault();
+                setLightboxSrc(null);
+              }
+            }}
+          >
+            <img
+              src={lightboxSrc}
+              alt="Enlarged gallery photo"
+              className="max-h-full max-w-full object-contain neu-border border-white"
+            />
+          </div>
+        )}
+        <AslAvatarPip eventId={eventId || ""} />
+      </SiteShell>
+    </>
+  );
+}

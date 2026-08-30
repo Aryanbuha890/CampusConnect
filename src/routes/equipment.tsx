@@ -73,8 +73,8 @@ export default function EquipmentMarketplace() {
     setIsCheckingAirspace(true);
     setAirspaceError(null);
 
-    const campusLat = 41.7030;
-    const campusLng = -86.2390;
+    const campusLat = 41.703;
+    const campusLng = -86.239;
     const startDate = new Date();
     const dateStr = startDate.toISOString().split("T")[0];
 
@@ -88,7 +88,7 @@ export default function EquipmentMarketplace() {
       if (data.restricted) {
         setAirspaceError(
           data.reason ||
-            "Airspace Restricted: A Temporary Flight Restriction is active on this date. Drones cannot be flown. Booking denied for legal compliance."
+            "Airspace Restricted: A Temporary Flight Restriction is active on this date. Drones cannot be flown. Booking denied for legal compliance.",
         );
       } else {
         setAirspaceError(null);
@@ -108,8 +108,6 @@ export default function EquipmentMarketplace() {
       setAirspaceError(null);
     }
   }, [selectedItem, rentDays]);
-
-
 
   // Fetch gear catalog (is_rentable = true)
   const {

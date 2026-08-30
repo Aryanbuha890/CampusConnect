@@ -10,34 +10,48 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { isFlashSaleRealtimePayload, type ActiveFlashSale } from "@/lib/flashSale";
-
+import { evaluateEarlyBirdThreshold } from "@/lib/dynamicEarlyBirdThresholds";
+import { NDASignatureModal } from "@/components/events/NDASignatureModal";
 interface TicketTier {
   id: string;
   name: string;
   price: number;
   capacity: number | null;
+  capacity_percentage?: number | null;
+  is_dynamic_capacity?: boolean;
   start_date: string | null;
   end_date: string | null;
   sold_count?: number; // fetched separately
 }
 
-export function TicketPricingTimeline({
-  eventId,
-  isOrganizer,
-}: {
+interface TicketPricingTimelineProps {
   eventId: string;
   isOrganizer?: boolean;
-}) {
+}
+
+export function TicketPricingTimeline({ eventId, isOrganizer }: TicketPricingTimelineProps) {
   const [tiers, setTiers] = useState<TicketTier[]>([]);
+  const [venueCapacity, setVenueCapacity] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
   const [preferredCurrency, setPreferredCurrency] = useState<string | null>(null);
   const [now, setNow] = useState(new Date());
+
+  // Surge Pricing State
+  const [surgeActive, setSurgeActive] = useState(false);
+  const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
+
   const [isDynamic, setIsDynamic] = useState(false);
   const [dynamicPrice, setDynamicPrice] = useState<number | null>(null);
   const [ticketsUntilIncrease, setTicketsUntilIncrease] = useState<number | null>(null);
   const [flashSale, setFlashSale] = useState<ActiveFlashSale | null>(null);
-
+  const [isGroupRsvp, setIsGroupRsvp] = useState(false);
+  const [friendEmails, setFriendEmails] = useState<string[]>(["", "", "", ""]);
+  const [hasJson, setHasJson] = useState(false);
+  const [selectedTierName, setSelectedTierName] = useState<string | null>(null);
+  const [requiresSignature, setRequiresSignature] = useState(false);
+  const [ndaSigned, setNdaSigned] = useState(false);
+  const [showNdaModal, setShowNdaModal] = useState(false);
   useEffect(() => {
     let cancelled = false;
 
@@ -92,68 +106,132 @@ export function TicketPricingTimeline({
     const fetchTiers = async () => {
       setLoading(true);
       try {
-        // Fetch event's dynamic pricing details
+        // Fetch event's dynamic pricing details and venue capacity
         const { data: eventData, error: eventError } = await supabase
           .from("events")
-          .select("base_price, surge_multiplier")
+          .select(
+            "base_price, surge_multiplier, venue_capacity, max_attendees, ticket_tiers, requires_signature",
+          )
           .eq("id", eventId)
           .single();
 
-        if (!eventError && eventData && eventData.base_price !== null) {
-          setIsDynamic(true);
-          const { data: dynPrice } = await supabase.rpc("calculate_current_price", {
-            p_event_id: eventId,
-          });
-          setDynamicPrice(dynPrice);
+        if (eventData) {
+          setVenueCapacity(eventData.venue_capacity ?? eventData.max_attendees ?? null);
+          setRequiresSignature(!!(eventData as any).requires_signature);
 
-          const { data: tUntilIncrease } = await supabase.rpc("tickets_until_price_increase", {
-            p_event_id: eventId,
-          });
-          setTicketsUntilIncrease(tUntilIncrease);
+          if ((eventData as any).requires_signature) {
+            const {
+              data: { user },
+            } = await supabase.auth.getUser();
+            if (user) {
+              const { data: sig } = await supabase
+                .from("event_nda_signatures")
+                .select("status")
+                .eq("event_id", eventId)
+                .eq("user_id", user.id)
+                .maybeSingle();
+              setNdaSigned(sig?.status === "completed");
+            }
+          }
         }
+        const jsonTiers = (eventData as any)?.ticket_tiers;
+        const hasJsonTiers = Array.isArray(jsonTiers) && jsonTiers.length > 0;
 
-        const { data: saleData } = await supabase
-          .from("active_event_flash_sales")
-          .select(
-            "id, event_id, ticket_tier_id, discount_percent, original_price_cents, sale_price_cents, starts_at, expires_at, status",
-          )
-          .eq("event_id", eventId)
-          .maybeSingle();
-        if (mounted) setFlashSale(saleData as ActiveFlashSale | null);
+        if (hasJsonTiers) {
+          const { data: rsvps, error: rsvpError } = await supabase
+            .from("event_rsvps")
+            .select("ticket_tier_name")
+            .eq("event_id", eventId)
+            .neq("status", "CANCELLED");
+
+          if (rsvpError) throw rsvpError;
 
         const { data, error } = await supabase
           .from("ticket_tiers")
-          .select("id, name, price, capacity, start_date, end_date")
+          .select(
+            "id, name, price, capacity, capacity_percentage, is_dynamic_capacity, start_date, end_date",
+          )
           .eq("event_id", eventId)
           .order("start_date", { ascending: true, nullsFirst: false });
 
-        if (error) throw error;
+          const mappedTiers = jsonTiers.map((t: any, idx: number) => ({
+            id: `json-${idx}`,
+            name: t.name,
+            price: Math.round(t.price * 100), // convert dollars to cents
+            capacity: t.quantity,
+            start_date: null,
+            end_date: null,
+            sold_count: counts[t.name] || 0,
+          }));
 
-        // Also fetch sold counts to determine capacity
-        const { data: rsvps, error: rsvpError } = await supabase
-          .from("event_rsvps")
-          .select("ticket_tier_id")
-          .eq("event_id", eventId);
-
-        if (rsvpError) throw rsvpError;
-
-        const counts = (rsvps || []).reduce((acc: any, rsvp) => {
-          if (rsvp.ticket_tier_id) {
-            acc[rsvp.ticket_tier_id] = (acc[rsvp.ticket_tier_id] || 0) + 1;
+          if (mounted) {
+            setTiers(mappedTiers);
+            setHasJson(true);
+            const firstAvailable = mappedTiers.find((t: any) => t.capacity === null || t.sold_count < t.capacity);
+            if (firstAvailable) {
+              setSelectedTierName(firstAvailable.name);
+            }
           }
-          return acc;
-        }, {});
+        } else {
+          if (!eventError && eventData && eventData.base_price !== null) {
+            setIsDynamic(true);
+            const { data: dynPrice } = await supabase.rpc("calculate_current_price", {
+              p_event_id: eventId,
+            });
+            setDynamicPrice(dynPrice);
 
-        setTiers(
-          (data || []).map((t) => ({
-            ...t,
-            sold_count: counts[t.id] || 0,
-          })),
-        );
+            const { data: tUntilIncrease } = await supabase.rpc("tickets_until_price_increase", {
+              p_event_id: eventId,
+            });
+            setTicketsUntilIncrease(tUntilIncrease);
+          }
+
+          const { data: saleData } = await supabase
+            .from("active_event_flash_sales")
+            .select(
+              "id, event_id, ticket_tier_id, discount_percent, original_price_cents, sale_price_cents, starts_at, expires_at, status",
+            )
+            .eq("event_id", eventId)
+            .maybeSingle();
+          if (mounted) setFlashSale(saleData as ActiveFlashSale | null);
+
+          const { data, error } = await supabase
+            .from("ticket_tiers")
+            .select("id, name, price, capacity, start_date, end_date")
+            .eq("event_id", eventId)
+            .order("start_date", { ascending: true, nullsFirst: false });
+
+          if (error) throw error;
+
+          // Also fetch sold counts to determine capacity
+          const { data: rsvps, error: rsvpError } = await supabase
+            .from("event_rsvps")
+            .select("ticket_tier_id")
+            .eq("event_id", eventId);
+
+          if (rsvpError) throw rsvpError;
+
+          const counts = (rsvps || []).reduce((acc: any, rsvp) => {
+            if (rsvp.ticket_tier_id) {
+              acc[rsvp.ticket_tier_id] = (acc[rsvp.ticket_tier_id] || 0) + 1;
+            }
+            return acc;
+          }, {});
+
+          if (mounted) {
+            setTiers(
+              (data || []).map((t) => ({
+                ...t,
+                sold_count: counts[t.id] || 0,
+              })),
+            );
+            setHasJson(false);
+          }
+        }
       } catch (err) {
         console.error("Failed to load ticket pricing info", err);
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted && mounted) setLoading(false);
       }
     };
     fetchTiers();
@@ -163,8 +241,59 @@ export function TicketPricingTimeline({
     };
   }, [eventId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSurgeStatus = async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!session) return;
+
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL || "http://localhost:54321"}/functions/v1/check-surge-status?eventId=${eventId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          },
+        );
+        if (response.ok) {
+          const result = await response.json();
+          if (!cancelled) {
+            setSurgeActive(result.isSurgeActive);
+            setSurgeMultiplier(result.multiplier);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch surge status", err);
+      }
+    };
+
+    fetchSurgeStatus();
+    // Poll every 15 seconds
+    const interval = setInterval(fetchSurgeStatus, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [eventId]);
+
   const handlePurchase = async () => {
-    setPurchasing(true);
+    if (requiresSignature && !ndaSigned) {
+      setShowNdaModal(true);
+      return;
+    }
+
+    setPurchasing(true);    const activeEmails = isGroupRsvp ? friendEmails.filter((e) => e.trim() !== "") : [];
+    if (isGroupRsvp && activeEmails.length !== 4) {
+      toast.error(
+        "Please provide exactly 4 friend emails to receive the Buy 4, Get 1 Free discount!",
+      );
+      setPurchasing(false);
+      return;
+    }
+
     try {
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL || "http://localhost:54321"}/functions/v1/create-stripe-checkout`,
@@ -176,7 +305,8 @@ export function TicketPricingTimeline({
           },
           body: JSON.stringify({
             eventId,
-            quantity: 1,
+            quantity: isGroupRsvp ? 5 : 1,
+            friendEmails: isGroupRsvp ? activeEmails : [],
           }),
         },
       );
@@ -218,6 +348,10 @@ export function TicketPricingTimeline({
   const nextTier =
     activeIndex !== -1 && activeIndex + 1 < tiers.length ? tiers[activeIndex + 1] : null;
 
+  // Apply surge pricing to active tier display
+  const displayPrice = activeTier ? Math.round(activeTier.price * surgeMultiplier) : 0;
+  const isSurging = surgeActive && surgeMultiplier > 1.0;
+
   return (
     <div className="bg-white border-2 border-black p-6 shadow-[4px_4px_0px_rgba(0,0,0,1)] relative overflow-hidden">
       <div className="flex items-center gap-2 mb-6">
@@ -227,6 +361,19 @@ export function TicketPricingTimeline({
         </h2>
       </div>
 
+      {isSurging && (
+        <div className="bg-yellow-400 border-2 border-black p-4 mb-6 flex items-center gap-3 font-mono text-sm animate-pulse shadow-[2px_2px_0_0_#000]">
+          <span className="text-xl">🚀</span>
+          <strong>HIGH DEMAND:</strong> Prices have temporarily surged. Secure your ticket now!
+        </div>
+      )}
+
+      {activeTier && activeTier.end_date && (
+        <div className="bg-peach/20 border-2 border-black p-3 mb-6 flex items-center gap-3 font-mono text-sm">
+          <Clock className="w-5 h-5 text-red-500 animate-pulse" />
+          <span>
+            ⏳ <strong>{activeTier.name}</strong> ends in{" "}
+            {formatDistanceToNow(new Date(activeTier.end_date))}!
       {isDynamic && ticketsUntilIncrease !== null && (
         <div className="bg-amber-100 border-2 border-black p-3 mb-6 flex items-center gap-3 font-mono text-sm text-amber-950">
           <Flame className="w-5 h-5 text-orange-500 animate-pulse" />
@@ -240,21 +387,65 @@ export function TicketPricingTimeline({
         </div>
       )}
 
-      {!isDynamic && activeTier && activeTier.end_date && (
-        <div className="bg-peach/20 border-2 border-black p-3 mb-6 flex items-center gap-3 font-mono text-sm">
-          <Clock className="w-5 h-5 text-red-500 animate-pulse" />
-          <span>
-            🔥 <strong>{activeTier.name}</strong> ends in{" "}
-            {formatDistanceToNow(new Date(activeTier.end_date))}!
-          </span>
+      {!isDynamic && activeTier && (
+        <div className="bg-peach/20 border-2 border-black p-3 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono text-sm">
+          <div className="flex items-center gap-3">
+            <Clock className="w-5 h-5 text-red-500 animate-pulse shrink-0" />
+            <div>
+              <span>
+                🔥 <strong>{activeTier.name}</strong>
+                {activeTier.end_date &&
+                  ` ends in ${formatDistanceToNow(new Date(activeTier.end_date))}!`}
+              </span>
+              {activeTier.capacity_percentage && (
+                <span className="block text-xs text-black/70 mt-0.5">
+                  Allocation: {activeTier.capacity_percentage}% of venue capacity
+                  {activeTier.sold_count !== undefined &&
+                    activeTier.capacity &&
+                    ` (${Math.max(0, activeTier.capacity - activeTier.sold_count)} of ${activeTier.capacity} remaining)`}
+                </span>
+              )}
+            </div>
+          </div>
           {nextTier && (
-            <span className="ml-auto text-black/60 hidden md:inline">
+            <span className="text-black/60 font-bold text-xs whitespace-nowrap">
               Next price: ${(nextTier.price / 100).toFixed(2)} USD
             </span>
           )}
         </div>
       )}
 
+      <div className="relative pt-8 pb-4">
+        {/* Timeline line */}
+        <div className="absolute top-12 left-0 right-0 h-1 bg-black z-0"></div>
+
+        <div className="flex justify-between relative z-10">
+          {tiers.map((tier, idx) => {
+            const state = getTierState(tier);
+            const isCurrent = idx === activeIndex;
+            const currentPriceDisplay = isCurrent
+              ? Math.round(tier.price * surgeMultiplier)
+              : tier.price;
+
+            return (
+              <div key={tier.id} className="flex flex-col items-center flex-1">
+                <div
+                  className={`text-lg font-black font-display mb-2 ${isCurrent && isSurging ? "text-red-600" : ""}`}
+                >
+                  ${(currentPriceDisplay / 100).toFixed(2)} USD
+                </div>
+
+                {/* Node */}
+                <div
+                  className={`w-6 h-6 rounded-full border-2 border-black flex items-center justify-center transition-colors
+                  ${
+                    state === "ended" || state === "sold_out"
+                      ? "bg-black"
+                      : isCurrent
+                        ? isSurging
+                          ? "bg-yellow-400 scale-125 animate-bounce"
+                          : "bg-lime scale-125"
+                        : "bg-white"
       {flashSale ? (
         <div className="my-6 border-4 border-black bg-red-600 p-4 font-mono text-white shadow-[4px_4px_0_0_#000]">
           <p className="flex items-center gap-2 text-xs font-black uppercase tracking-wider">
@@ -279,6 +470,44 @@ export function TicketPricingTimeline({
               This event uses real-time surge pricing. Prices adjust dynamically based on capacity
               demand and remaining tickets. Secure your spot early to lock in a lower rate!
             </p>
+          </div>
+        </div>
+      ) : hasJson ? (
+        <div className="flex flex-col gap-3 my-4">
+          <label className="text-xs font-bold uppercase tracking-wider text-black text-left block">
+            Select Ticket Option
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {tiers.map((t) => {
+              const isSoldOut = t.capacity !== null && (t.sold_count || 0) >= t.capacity;
+              const isSelected = selectedTierName === t.name;
+
+              return (
+                <button
+                  key={t.name}
+                  type="button"
+                  disabled={isSoldOut}
+                  onClick={() => setSelectedTierName(t.name)}
+                  className={`border-2 border-black p-4 text-left font-mono relative transition-all rounded-none ${
+                    isSoldOut
+                      ? "bg-neutral-100 opacity-50 cursor-not-allowed border-neutral-400 text-neutral-400"
+                      : isSelected
+                        ? "bg-lime text-black shadow-[4px_4px_0px_#000]"
+                        : "bg-white text-black hover:bg-neutral-50 shadow-[2px_2px_0px_#000] hover:shadow-[4px_4px_0px_#000]"
+                  }`}
+                >
+                  <div className="font-display text-lg font-black uppercase">
+                    {t.name}
+                  </div>
+                  <div className="text-sm font-bold mt-1">
+                    ${(t.price / 100).toFixed(2)} USD
+                  </div>
+                  <div className="text-xs mt-2 font-semibold">
+                    {isSoldOut ? "SOLD OUT" : `${t.capacity! - t.sold_count!} left`}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       ) : (
@@ -335,8 +564,62 @@ export function TicketPricingTimeline({
         </div>
       )}
 
+      {/* Group RSVP Discount Section */}
+      {(activeTier || isDynamic || flashSale) && (
+        <div className="mt-6 border-t-2 border-black/10 pt-6">
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              type="checkbox"
+              id="group-rsvp-checkbox"
+              checked={isGroupRsvp}
+              onChange={(e) => setIsGroupRsvp(e.target.checked)}
+              className="w-4 h-4 rounded border-2 border-black text-lime focus:ring-0 focus:ring-offset-0 cursor-pointer"
+            />
+            <label
+              htmlFor="group-rsvp-checkbox"
+              className="font-mono text-sm font-bold uppercase tracking-wider cursor-pointer"
+            >
+              👥 Buy for a Group (Buy 4, Get 1 Ticket Free!)
+            </label>
+          </div>
+
+          {isGroupRsvp && (
+            <div className="bg-cream border-2 border-black p-4 rounded-lg flex flex-col gap-3 font-mono text-sm">
+              <p className="text-xs text-black/70 font-semibold uppercase tracking-wide">
+                Enter your 4 friends' emails to invite them. They must be registered platform users.
+              </p>
+              {friendEmails.map((email, idx) => (
+                <div key={idx} className="flex flex-col gap-1">
+                  <label
+                    htmlFor={`friend-email-${idx}`}
+                    className="text-[10px] font-bold uppercase"
+                  >
+                    Friend {idx + 1} Email
+                  </label>
+                  <input
+                    id={`friend-email-${idx}`}
+                    type="email"
+                    placeholder="friend@college.edu"
+                    value={email}
+                    onChange={(e) => {
+                      const updated = [...friendEmails];
+                      updated[idx] = e.target.value;
+                      setFriendEmails(updated);
+                    }}
+                    className="border-2 border-black rounded-md px-3 py-1.5 bg-white text-sm focus:outline-none"
+                  />
+                </div>
+              ))}
+              <div className="bg-lime/20 border border-black/30 p-2 rounded text-xs text-center font-bold">
+                🎉 Buy 4, Get 1 Free coupon discount will be automatically applied at checkout!
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mt-8 pt-6 border-t-2 border-black/10 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div>
+        <div className="text-left">
           {flashSale ? (
             <p className="font-mono text-sm text-black/70">
               Flash Sale:{" "}
@@ -356,12 +639,29 @@ export function TicketPricingTimeline({
                 preferredCurrency={preferredCurrency}
               />
             </p>
-          ) : activeTier ? (
+          ) : hasJson && selectedTierName ? (() => {
+            const selTier = tiers.find(t => t.name === selectedTierName);
+            return selTier ? (
+              <p className="font-mono text-sm text-black/70">
+                Selected Option: <strong>{selTier.name}</strong> at $
+                {(selTier.price / 100).toFixed(2)} USD
+                <CurrencyEstimate
+                  amountUsd={selTier.price / 100}
+                  preferredCurrency={preferredCurrency}
+                />
+                {selTier.capacity !== null && (
+                  <span className="block mt-1">
+                    Capacity: {selTier.capacity - (selTier.sold_count || 0)} remaining
+                  </span>
+                )}
+              </p>
+            ) : null;
+          })() : activeTier ? (
             <p className="font-mono text-sm text-black/70">
-              Current Tier: <strong>{activeTier.name}</strong> at $
-              {(activeTier.price / 100).toFixed(2)} USD
+              Current Tier: <strong>{activeTier.name}</strong> at ${(displayPrice / 100).toFixed(2)}{" "}
+              USD
               <CurrencyEstimate
-                amountUsd={activeTier.price / 100}
+                amountUsd={displayPrice / 100}
                 preferredCurrency={preferredCurrency}
               />
               {activeTier.capacity !== null && (
@@ -381,19 +681,35 @@ export function TicketPricingTimeline({
           size="lg"
           className="w-full sm:w-auto font-display font-black uppercase tracking-widest bg-lime hover:bg-lime/80 text-black border-2 border-black shadow-[2px_2px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={handlePurchase}
-          disabled={(!activeTier && !isDynamic && !flashSale) || purchasing}
+          disabled={(!activeTier && !hasJson && !isDynamic && !flashSale) || (hasJson && !selectedTierName) || purchasing}
         >
           {purchasing
             ? "Processing..."
+            : activeTier
+              ? `Buy Ticket for $${(displayPrice / 100).toFixed(2)} USD`
+              : "Unavailable"}
             : flashSale
               ? `Buy Ticket for $${(flashSale.sale_price_cents / 100).toFixed(2)} USD`
               : isDynamic && dynamicPrice !== null
                 ? `Buy Ticket for $${(dynamicPrice / 100).toFixed(2)} USD`
-                : activeTier
-                  ? `Buy Ticket for $${(activeTier.price / 100).toFixed(2)} USD`
-                  : "Unavailable"}
+                : hasJson && selectedTierName
+                  ? `Buy Ticket for $${((tiers.find(t => t.name === selectedTierName)?.price || 0) / 100).toFixed(2)} USD`
+                  : activeTier
+                    ? `Buy Ticket for $${(activeTier.price / 100).toFixed(2)} USD`
+                    : "Unavailable"}
         </Button>
       </div>
-    </div>
+
+      {showNdaModal && (
+        <NDASignatureModal
+          eventId={eventId}
+          onClose={() => setShowNdaModal(false)}
+          onSigned={() => {
+            setNdaSigned(true);
+            setShowNdaModal(false);
+            handlePurchase();
+          }}
+        />
+      )}    </div>
   );
 }
