@@ -215,6 +215,8 @@ const ProjectHubRoute = lazy(() => import("./routes/project-hub"));
 const EventFeedbackPage = lazy(() => import("@/pages/EventFeedbackPage"));
 
 // ---------------------------------------------------------------------------
+const PollOverlayRoute = lazy(() => import("./routes/overlay.poll.$poll_id"));// ---------------------------------------------------------------------------
+const ParkingSpotFinderRoute = lazy(() => import("./pages/ParkingSpotFinder"));
 // Animated Outlet Wrapper for Framer Motion transitions with Skeleton Fallback
 const EventBudgetManagerRoute = lazy(() => import("./pages/EventBudgetManager"));
 const AttendanceTrackerRoute = lazy(() => import("./pages/CampusAttendanceTracker"));
@@ -720,6 +722,7 @@ const router = createBrowserRouter(
           <Route path="/admin/leadership-approvals" element={<AdminLeadershipApprovals />} />
           <Route path="/equipment-rentals" element={<EquipmentMarketplace />} />
           <Route path="/mentorship-dashboard" element={<MentorshipDashboard />} />
+          <Route path="/parking" element={<ParkingSpotFinderRoute />} />
           <Route path="/unsubscribe" element={<UnsubscribeRoute />} />
           <Route path="/event-budgets" element={<EventBudgetManagerRoute />} />
           {/* Catch-all route for 404 errors */}
