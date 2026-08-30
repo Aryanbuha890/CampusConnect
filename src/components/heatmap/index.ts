@@ -5,4 +5,6 @@ export { RSVPVelocityTrend } from "./RSVPVelocityTrend";
 export { CategoryBreakdown } from "./CategoryBreakdown";
 export { SummaryStatsCards } from "./SummaryStatsCards";
 export { HeatmapFilterBar } from "./HeatmapFilterBar";
+export { TrendComparisonCard } from "./TrendComparisonCard";
+export { PredictiveTrendChart } from "./PredictiveTrendChart";
 export { default as CampusActivityHeatmap } from "./CampusActivityHeatmap";
