@@ -40,6 +40,7 @@ import {
 } from "../../../lib/floorplan/types";
 import { describeAssignment, toFloorplanState } from "../../../lib/floorplan/serialize";
 import { parseHiringTags } from "../../../lib/floorplan/search";
+import type { EventLayoutZone } from "../../../lib/eventLayoutHeatmap";
 
 const PALETTE_KINDS: AssetKind[] = [
   "rect_table",
@@ -70,6 +71,9 @@ interface FloorplanEditorProps {
   onMovePoi: (id: string, x_ft: number, y_ft: number) => void;
   onUpdatePoi: (id: string, patch: Partial<{ label: string; x_ft: number; y_ft: number }>) => void;
   onRemovePoi: (id: string) => void;
+  /** #4722 live occupancy overlay from zone door QR scans. */
+  heatmapZones?: EventLayoutZone[];
+  onZoneDoorClick?: (zone: EventLayoutZone) => void;
 }
 
 function PaletteChip({ kind, onClick }: { kind: AssetKind; onClick: (kind: AssetKind) => void }) {
@@ -162,6 +166,8 @@ export const FloorplanEditor: React.FC<FloorplanEditorProps> = ({
   onMovePoi,
   onUpdatePoi,
   onRemovePoi,
+  heatmapZones,
+  onZoneDoorClick,
 }) => {
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -409,6 +415,8 @@ export const FloorplanEditor: React.FC<FloorplanEditorProps> = ({
                 onRemovePoi(id);
                 setSelectedId(null);
               }}
+              heatmapZones={heatmapZones}
+              onZoneDoorClick={onZoneDoorClick}
             />
           </div>
 
@@ -457,6 +465,19 @@ export const FloorplanEditor: React.FC<FloorplanEditorProps> = ({
                   className="neu-border mt-1 w-full px-2 py-1 font-sans text-sm"
                 />
               </label>
+
+              {(selected.kind === "rect_table" || selected.kind === "round_table") && (
+                <label className="block font-mono text-xs">
+                  Base Price ($)
+                  <input
+                    type="number"
+                    min={0}
+                    value={selected.base_price || 0}
+                    onChange={(e) => onUpdate(selected.id, { base_price: Number(e.target.value) })}
+                    className="neu-border mt-1 w-full px-2 py-1 font-sans text-sm"
+                  />
+                </label>
+              )}
 
               <div className="flex gap-3 font-mono text-xs">
                 <label className="flex-1">

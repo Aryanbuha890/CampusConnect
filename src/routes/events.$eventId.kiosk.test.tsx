@@ -110,13 +110,9 @@ describe("Kiosk Mode - Guest Network Provisioning (#4819)", () => {
   const triggerBarcodeScan = (scannedValue: string) => {
     act(() => {
       for (const char of scannedValue) {
-        window.dispatchEvent(
-          new KeyboardEvent("keydown", { key: char, bubbles: true })
-        );
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: char, bubbles: true }));
       }
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
-      );
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
   };
 
@@ -135,7 +131,7 @@ describe("Kiosk Mode - Guest Network Provisioning (#4819)", () => {
         <Routes>
           <Route path="/events/:eventId/kiosk" element={<KioskMode />} />
         </Routes>
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     // Initial state check
@@ -184,7 +180,7 @@ describe("Kiosk Mode - Guest Network Provisioning (#4819)", () => {
         <Routes>
           <Route path="/events/:eventId/kiosk" element={<KioskMode />} />
         </Routes>
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     // Trigger check-in scan
@@ -205,7 +201,7 @@ describe("Kiosk Mode - Guest Network Provisioning (#4819)", () => {
           Authorization: "Bearer cisco-ise-secret-token",
         }),
         body: expect.stringContaining("user-123"),
-      })
+      }),
     );
 
     // Verify Guest Wi-Fi card details rendered on screen
@@ -234,7 +230,7 @@ describe("Kiosk Mode - Guest Network Provisioning (#4819)", () => {
         <Routes>
           <Route path="/events/:eventId/kiosk" element={<KioskMode />} />
         </Routes>
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     // Trigger check-in scan
