@@ -154,6 +154,7 @@ import { CaptchaWidget } from "@/components/CaptchaWidget";
 import { Blurhash } from "react-blurhash";
 import { isValidBlurhash, DEFAULT_FALLBACK_BLURHASH } from "@/lib/blurhashUtils";
 import { EventDescriptionTranslation } from "@/components/events/EventDescriptionTranslation";
+import { EventTransitSyncWidget } from "@/components/events/EventTransitSyncWidget";
 import { useDeviceFingerprint } from "@/hooks/useDeviceFingerprint";
 import { WaitlistBiddingLeaderboard } from "@/components/events/WaitlistBiddingLeaderboard";
 
@@ -2711,6 +2712,14 @@ export default function EventDetailsPage() {
                     >
                       Open in Google Maps ↗
                     </a>
+
+                    <div className="mt-6">
+                      <EventTransitSyncWidget
+                        venueLatitude={coordsCheck.lat}
+                        venueLongitude={coordsCheck.lng}
+                        venueName={event.title}
+                      />
+                    </div>
                   )}
                 </div>
               )}
