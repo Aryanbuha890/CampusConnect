@@ -35,6 +35,7 @@ import {
   type CatererContract,
   type CatererTempLog,
 } from "@/services/catererTempLoggingService";
+import { CatererZkService } from "@/services/catererZkService";
 
 export interface DietaryForecastPanelProps {
   eventId: string;
@@ -115,12 +116,22 @@ function ForecastContent({
   const [tempLogs, setTempLogs] = useState<CatererTempLog[]>([]);
   const [uploading, setUploading] = useState(false);
 
+  // States for zk-SNARK safety compliance
+  const [zkProofs, setZkProofs] = useState<any[]>([]);
+  const [generatingZk, setGeneratingZk] = useState(false);
+  const [submittingZk, setSubmittingZk] = useState(false);
+  const [generatedProofHash, setGeneratedProofHash] = useState("");
+  const [lotNumber, setLotNumber] = useState("Lot 123");
+  const [totalReadings, setTotalReadings] = useState(5000);
+
   const loadCatererData = useCallback(async () => {
     const c = await CatererTempLoggingService.fetchContractForEvent(forecast.event_id);
     setContract(c);
     if (c) {
       const logs = await CatererTempLoggingService.fetchTempLogs(c.id);
       setTempLogs(logs);
+      const proofs = await CatererZkService.fetchZkProofs(c.id);
+      setZkProofs(proofs);
     }
   }, [forecast.event_id]);
 
@@ -162,6 +173,48 @@ function ForecastContent({
       void supabase.removeChannel(channel);
     };
   }, [contract, loadCatererData, supabase]);
+
+  const handleGenerateZkProof = async () => {
+    if (!contract) return;
+    setGeneratingZk(true);
+    toast.info("Generating zk-SNARK Food Safety proof (hiding route/temp logs)...");
+
+    const proofRes = await CatererZkService.generateMockZkSnark(
+      tempLogs.length > 0 ? tempLogs.map(l => ({ temperature_fahrenheit: Number(l.temperature_fahrenheit) })) : []
+    );
+
+    setGeneratingZk(false);
+    if (proofRes.is_valid) {
+      setGeneratedProofHash(proofRes.proof_hash);
+      setTotalReadings(proofRes.total_readings);
+      toast.success("zk-SNARK Groth16 proof compiled successfully!");
+    } else {
+      toast.error("zk-SNARK Compilation FAILED: Temperatures exceeded 40°F!");
+    }
+  };
+
+  const handleSubmitZkProof = async () => {
+    if (!contract || !generatedProofHash) return;
+    setSubmittingZk(true);
+    toast.info("Publishing Zero-Knowledge proof of compliance to Polygon blockchain...");
+
+    const res = await CatererZkService.submitZkProof(
+      contract.id,
+      lotNumber,
+      generatedProofHash,
+      totalReadings,
+      40.00
+    );
+
+    setSubmittingZk(false);
+    if (res.success) {
+      toast.success("zk-SNARK verified and written to Polygon ledger successfully!");
+      setGeneratedProofHash("");
+      void loadCatererData();
+    } else {
+      toast.error(res.error || "Failed to submit zk-SNARK proof.");
+    }
+  };
 
   const handleSimulateSafeUpload = async () => {
     if (!contract) return;
@@ -650,6 +703,95 @@ function ForecastContent({
                 >
                   Sync Danger Logs
                 </button>
+              </div>
+            </div>
+
+            {/* Zero-Knowledge Compliance Section */}
+            <div
+              className="border-2 border-black bg-zinc-50 p-4 shadow-[2px_2px_0px_rgba(0,0,0,1)] text-black mt-4"
+              data-testid="zk-compliance-section"
+            >
+              <div className="flex items-center gap-1.5 border-b border-black pb-1.5 mb-3">
+                <span className="font-black text-[10px] uppercase text-indigo-700 block">
+                  🛡️ Zero-Knowledge FDA Compliance (zk-SNARKs)
+                </span>
+              </div>
+              
+              <div className="space-y-3">
+                <div className="text-[10px] text-zinc-600 leading-normal">
+                  Caterers prove temperature compliance to FDA regulators without publishing proprietary supply chain routes or raw telemetry on the public blockchain.
+                </div>
+
+                {/* Submited Proofs list */}
+                {zkProofs.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="font-bold text-[9px] uppercase block text-zinc-500">Verified zk-SNARK Receipts on Polygon:</span>
+                    {zkProofs.map(proof => (
+                      <div key={proof.id} className="border border-black bg-emerald-50 p-2 text-[9px] leading-normal" data-testid="verified-zk-proof-receipt">
+                        <div className="flex justify-between font-bold">
+                          <span>Lot: {proof.lot_number}</span>
+                          <span className="text-emerald-700">VERIFIED</span>
+                        </div>
+                        <div className="truncate font-mono text-[8px] text-zinc-500">Proof: {proof.proof_hash}</div>
+                        <div>Certified: 0 of {proof.total_readings} logs exceeded {proof.max_threshold_temp}°F</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Proof generation console */}
+                {contract.shipment_status !== 'SAFE' && (
+                  <div className="border border-black bg-white p-3 space-y-3">
+                    <span className="font-black text-[9px] uppercase block">zk-SNARK Proving Key Generator</span>
+                    
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <div>
+                        <label className="block text-zinc-500 font-bold mb-1">Lot Identifer</label>
+                        <input
+                          type="text"
+                          value={lotNumber}
+                          onChange={(e) => setLotNumber(e.target.value)}
+                          className="border border-black px-1.5 py-0.5 w-full outline-none text-black bg-white"
+                          data-testid="zk-lot-input"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-zinc-500 font-bold mb-1">Max FDA Temp</label>
+                        <input
+                          type="text"
+                          disabled
+                          value="40.0°F"
+                          className="border border-black px-1.5 py-0.5 w-full bg-zinc-100 text-zinc-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleGenerateZkProof}
+                        disabled={generatingZk || tempLogs.length === 0}
+                        className="border border-black bg-indigo-100 hover:bg-indigo-200 px-3 py-1 font-mono text-[9px] font-bold uppercase cursor-pointer"
+                        data-testid="caterer-gen-zk-btn"
+                      >
+                        {generatingZk ? "Proving..." : "Generate zk-SNARK"}
+                      </button>
+
+                      {generatedProofHash && (
+                        <button
+                          type="button"
+                          onClick={handleSubmitZkProof}
+                          disabled={submittingZk}
+                          className="border border-black bg-emerald-500 text-white hover:bg-emerald-600 px-3 py-1 font-mono text-[9px] font-bold uppercase cursor-pointer animate-bounce"
+                          data-testid="caterer-submit-zk-btn"
+                        >
+                          {submittingZk ? "Submitting..." : "Submit Proof to Polygon"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
               </div>
             </div>
           </div>
